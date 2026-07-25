@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
 const { getDb } = require('../db');
 const { runAgentLoop, generateGreetingAndSave } = require('../ai');
 const { authenticateToken } = require('../middleware/auth');
@@ -142,6 +143,29 @@ router.get('/chats/:id/messages', authenticateToken, async (req, res) => {
     if (!chat) return res.status(404).json({ error: 'Chat not found.' });
 
     const messages = await db.all('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC', [req.params.id]);
+
+    if (messages.length > 0) {
+      const messageIds = messages.map(m => m.id);
+      const placeholders = messageIds.map(() => '?').join(',');
+      const attachments = await db.all(
+        `SELECT id, message_id, kind, original_filename, mime_type FROM message_attachments WHERE message_id IN (${placeholders})`,
+        messageIds
+      );
+      const attachmentsByMessage = new Map();
+      for (const att of attachments) {
+        if (!attachmentsByMessage.has(att.message_id)) attachmentsByMessage.set(att.message_id, []);
+        attachmentsByMessage.get(att.message_id).push({
+          id: att.id,
+          kind: att.kind,
+          filename: att.original_filename,
+          mimeType: att.mime_type
+        });
+      }
+      for (const msg of messages) {
+        msg.attachments = attachmentsByMessage.get(msg.id) || [];
+      }
+    }
+
     res.json(messages);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -155,7 +179,7 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
     return res.status(403).json({ error: 'Chat is disabled while on another tab.' });
   }
 
-  const { chatId, message } = req.body;
+  const { chatId, message, attachmentIds } = req.body;
   if (!chatId || !message) return res.status(400).json({ error: 'chatId and message are required.' });
 
   const db = await getDb();
@@ -164,10 +188,35 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
   const chat = await db.get('SELECT id FROM chats WHERE id = ? AND user_id = ?', [chatId, req.user.id]);
   if (!chat) return res.status(404).json({ error: 'Chat not found.' });
 
+  // Resolve any pending attachments (images/documents) attached to this turn
+  let images = [];
+  let pendingAttachments = [];
+  let finalMessage = message;
+  if (Array.isArray(attachmentIds) && attachmentIds.length > 0) {
+    const placeholders = attachmentIds.map(() => '?').join(',');
+    pendingAttachments = await db.all(
+      `SELECT * FROM message_attachments WHERE id IN (${placeholders}) AND chat_id = ? AND user_id = ? AND message_id IS NULL`,
+      [...attachmentIds, chatId, req.user.id]
+    );
+
+    for (const att of pendingAttachments) {
+      if (att.kind === 'image') {
+        try {
+          const buffer = fs.readFileSync(att.stored_path);
+          images.push(`data:${att.mime_type};base64,${buffer.toString('base64')}`);
+        } catch (fileErr) {
+          logger.error(`Failed to read image attachment ${att.id}:`, fileErr);
+        }
+      } else if (att.kind === 'document' && att.extracted_text) {
+        finalMessage += `\n\n[Attached document: ${att.original_filename}]\n${att.extracted_text}`;
+      }
+    }
+  }
+
   // Get user settings
   let settings = await db.get('SELECT * FROM user_settings WHERE user_id = ?', [req.user.id]);
   if (!settings) {
-    settings = { provider: 'local', model_name: 'qwen2.5-coder-7b-instruct' };
+    settings = { provider: 'local', model_name: 'google/gemma-4-e4b' };
   }
 
   // Get chat history
@@ -262,15 +311,23 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
       }
 
       // Save user message to database
-      await db.run(
+      const userMsgResult = await db.run(
         'INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)',
-        [chatId, 'user', message]
+        [chatId, 'user', finalMessage]
       );
+
+      if (pendingAttachments.length > 0) {
+        const attPlaceholders = pendingAttachments.map(() => '?').join(',');
+        await db.run(
+          `UPDATE message_attachments SET message_id = ? WHERE id IN (${attPlaceholders})`,
+          [userMsgResult.lastID, ...pendingAttachments.map(a => a.id)]
+        );
+      }
 
       // Resolve preferred model names dynamically
       let actualModel = settings.model_name;
       if (settings.provider === 'local') {
-        actualModel = settings.preferred_local_model || settings.model_name || 'qwen2.5-coder-7b-instruct';
+        actualModel = settings.preferred_local_model || settings.model_name || 'google/gemma-4-e4b';
       } else if (settings.provider !== 'local' && settings.preferred_online_model) {
         actualModel = settings.preferred_online_model;
       }
@@ -352,7 +409,8 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
             provider: settings.provider,
             modelName: actualModel,
             supervisorModel: actualModel,
-            userMessage: message,
+            userMessage: finalMessage,
+            images,
             history,
             localBaseUrl: settings.local_url || process.env.LOCAL_LLM_URL || 'http://192.168.1.42:1234/v1',
             localApiKey: decryptedLocalKey || process.env.LOCAL_LLM_KEY || '',
@@ -419,7 +477,7 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
       completed = true;
 
     const userSettings = await db.get('SELECT * FROM user_settings WHERE user_id = ?', [req.user.id]) || {};
-    const chatMemContent = `User asked: "${message.trim()}"\nAssistant replied: "${finalContent.trim()}"`;
+    const chatMemContent = `User asked: "${finalMessage.trim()}"\nAssistant replied: "${finalContent.trim()}"`;
     const chatMemEmbedding = await getEmbedding(chatMemContent, userSettings);
 
     // Save Q&A to short-term memory vault for 24 hours

@@ -8,6 +8,7 @@ import MemoryPane from './components/MemoryPane';
 import SettingsModal from './components/SettingsModal';
 import ProfileModal from './components/ProfileModal';
 import AgentDashboard from './components/AgentDashboard';
+import AdminDashboard from './components/AdminDashboard';
 import PersonalitySkillsPane from './components/PersonalitySkillsPane';
 import Toast from './components/Toast';
 import SetupWizard from './components/SetupWizard';
@@ -700,9 +701,9 @@ function App() {
   };
 
   // Chat Streaming Logic
-  const handleSendMessage = async (e, directText = null) => {
+  const handleSendMessage = async (e, directText = null, attachmentIds = []) => {
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
-    
+
     const messageText = directText !== null ? directText : inputText;
     if (!messageText.trim() || !activeChatId || isStreaming) return;
 
@@ -730,7 +731,7 @@ function App() {
           'Authorization': `Bearer ${token}`
         },
         signal: controller.signal,
-        body: JSON.stringify({ chatId: activeChatId, message: messageText })
+        body: JSON.stringify({ chatId: activeChatId, message: messageText, attachmentIds })
       });
 
       if (!response.ok) {
@@ -1038,7 +1039,7 @@ function App() {
                      <span className="normal-text">ntelligence</span>
                    </span>
                  </span>
-               ) : (activeTab === 'calendar' ? 'Schedule Manager' : (activeTab === 'academy' ? 'AI Coding Academy' : (activeTab === 'memory' ? 'AI Memory Vault' : (activeTab === 'personality-skills' ? 'Persona & Skills' : 'Agent Dashboard'))))}
+               ) : (activeTab === 'calendar' ? 'Schedule Manager' : (activeTab === 'academy' ? 'AI Coding Academy' : (activeTab === 'memory' ? 'AI Memory Vault' : (activeTab === 'personality-skills' ? 'Persona & Skills' : (activeTab === 'admin' ? 'Admin Dashboard' : 'Agent Dashboard')))))}
              </h2>
           </div>
 
@@ -1058,6 +1059,7 @@ function App() {
 
         {activeTab === 'chat' && !isChatPoppedOut && (
           <ChatPane
+            token={token}
             settings={settings}
             messages={messages}
             activeChatId={activeChatId}
@@ -1123,6 +1125,15 @@ function App() {
             settings={settings}
           />
         )}
+        {activeTab === 'admin' && user?.is_admin && (
+          <AdminDashboard
+            token={token}
+            currentUserId={user?.id}
+            nodes={nodes}
+            handleDeleteNode={handleDeleteNode}
+            onRefreshNodes={fetchNodes}
+          />
+        )}
       </main>
 
       {/* Settings Modal */}
@@ -1139,7 +1150,6 @@ function App() {
         showOnlineKey={showOnlineKey}
         setShowOnlineKey={setShowOnlineKey}
         onFetchLocalModels={fetchLocalModels}
-        currentUser={user}
         token={token}
       />
 
@@ -1173,6 +1183,7 @@ function App() {
       {isChatPoppedOut && (
         <PopoutWindow onClose={() => setIsChatPoppedOut(false)}>
           <ChatPane
+            token={token}
             settings={settings}
             messages={messages}
             activeChatId={activeChatId}

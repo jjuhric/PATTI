@@ -40,3 +40,6 @@ backend/public/tts/
 
 # Runtime-generated documents (produced by document_generator_tool.js)
 generated_documents/
+
+# User-uploaded chat attachments (images/documents, produced by attachments.js)
+chat_attachments/

@@ -33,6 +33,8 @@ const alertsRouter = require('./routes/alerts');
 const lmstudioSwitchRouter = require('./routes/lmstudio_switch');
 const personalitiesSkillsRouter = require('./routes/personalities_skills');
 const documentsRouter = require('./routes/documents');
+const attachmentsRouter = require('./routes/attachments');
+const adminRouter = require('./routes/admin');
 const mqttService = require('./services/mqtt_service');
 
 const helmet = require('helmet');
@@ -133,6 +135,9 @@ getDb().then(async (db) => {
       const nodeHealthService = require('./services/node_health_service');
       nodeHealthService.startDaemon();
 
+      const networkDiscoveryDaemon = require('./services/network_discovery_daemon');
+      networkDiscoveryDaemon.startDaemon();
+
       const researchDaemon = require('./services/research_daemon');
       researchDaemon.startDaemon();
 
@@ -168,6 +173,8 @@ app.use('/api/token-usage', tokenUsageRouter);
 app.use('/api/lmstudio', lmstudioRouter);
 app.use('/api/alerts', alertsRouter);
 app.use('/api/documents', documentsRouter);
+app.use('/api/attachments', attachmentsRouter);
+app.use('/api/admin', adminRouter);
 app.use('/api', chatRouter); // Routes handle their own prefixing (e.g. /chats, /chat/stream)
 
 // Root health check endpoint (unauthenticated, for node monitoring)
@@ -335,5 +342,25 @@ const gracefulShutdown = async () => {
 
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
+
+// Without these, an uncaught error crashes the process silently as far as winston
+// is concerned - Node dumps the stack to stderr (which nobody is watching for a
+// backgrounded dev server) and app.log just goes quiet with no trace of why.
+// The daily-rotate-file transport writes asynchronously, so exiting immediately
+// after logger.error() can kill the process before the write reaches disk -
+// the short delay here gives it a chance to flush first.
+function logFatalAndExit(message) {
+  logger.error(message);
+  setTimeout(() => process.exit(1), 300);
+}
+
+process.on('uncaughtException', (err) => {
+  logFatalAndExit(`[Fatal] Uncaught exception, process will exit: ${err.stack || err.message}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  const detail = reason instanceof Error ? (reason.stack || reason.message) : String(reason);
+  logFatalAndExit(`[Fatal] Unhandled promise rejection, process will exit: ${detail}`);
+});
 
 

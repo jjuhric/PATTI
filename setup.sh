@@ -249,6 +249,13 @@ else
     echo -e "\n===================================================="
     echo "  Configuration Settings"
     echo "===================================================="
+    echo "REQUIRED for PATTI to start at all:"
+    echo "  - JWT_SECRET and DB_ENCRYPTION_SECRET (auto-generated below, no action needed)"
+    echo "  - Admin Username / Password (used to log in to the web UI)"
+    echo "  - Local LLM Base URL (where LM Studio/Ollama/etc is running)"
+    echo "Everything else below is OPTIONAL - press Enter to accept the default or leave blank,"
+    echo "and you can fill it in later from the Settings page in the app."
+    echo ""
 
     if [ "$DEFAULT_IS_HOST" = "false" ]; then
         DEFAULT_IS_HOST_YN="n"
@@ -403,12 +410,25 @@ else
     DEPLOY_MODE="backend-only"
 fi
 
-# Generate random JWT_SECRET if it matches the default placeholder
-DEFAULT_SECRET="some_long_random_secret_phrase_for_private_ai_assistant"
-if grep -q "$DEFAULT_SECRET" .env; then
-    NEW_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-    sed -i "s/$DEFAULT_SECRET/$NEW_SECRET/" .env
-fi
+# Generate strong random values for the two secrets the server refuses to start without
+# (backend/middleware/auth.js and backend/utils/crypto.js both hard-exit if these are
+# unset in production). Replaces whatever placeholder value is currently set - matches
+# on a "placeholder_" prefix or an empty value rather than one exact hardcoded string, so
+# this keeps working even if .env.example's placeholder text changes later.
+set_random_secret_if_placeholder() {
+    local key=$1
+    local current_val
+    current_val=$(grep -E "^${key}=" .env | cut -d'=' -f2- || echo "")
+    if [ -z "$current_val" ] || [[ "$current_val" == placeholder_* ]]; then
+        local new_secret
+        new_secret=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+        sed -i "s|^${key}=.*|${key}=${new_secret}|" .env
+        log "Generated a new random ${key}."
+    fi
+}
+
+set_random_secret_if_placeholder "JWT_SECRET"
+set_random_secret_if_placeholder "DB_ENCRYPTION_SECRET"
 
 if [ "$IS_HOST" = "true" ]; then
     # 6. Install Dependencies

@@ -109,6 +109,12 @@ export default function Esp32MessageModal({ isOpen, onClose, token, hostIps = []
 
   if (!isOpen) return null;
 
+  const isEsp32OrRpiFamily = (type) => {
+    if (!type) return false;
+    const t = type.toLowerCase();
+    return t.includes('esp32') || t.includes('rpi') || t.includes('raspberry');
+  };
+
   const isHostIp = (ip) => {
     return hostIps.includes(ip) || ip === '127.0.0.1' || ip === 'localhost';
   };
@@ -369,7 +375,7 @@ export default function Esp32MessageModal({ isOpen, onClose, token, hostIps = []
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
             <div>
-              {deviceType === 'ESP32' && (
+              {isEsp32OrRpiFamily(deviceType) && (
                 <button
                   type="button"
                   className="btn btn-secondary"

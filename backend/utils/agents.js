@@ -472,7 +472,7 @@ Do NOT include any other text, markdown wrapper, or conversational filler outsid
   }
 }
 
-async function runWorkerAgent(agentName, settings, task, db, userId) {
+async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
   global.activeAgentOps = (global.activeAgentOps || 0) + 1;
   try {
     let targetAgent = agentName;
@@ -700,6 +700,12 @@ async function runWorkerAgent(agentName, settings, task, db, userId) {
     } else if (decision.tool === 'deep_research_pro') {
       const { handleDeepResearchProTool } = require('../tools/deep_research_pro_tool');
       output = await handleDeepResearchProTool(db, userId, decision.action, decision.params);
+    } else if (decision.tool === 'course_builder') {
+      const { handleCourseBuilderTool } = require('../tools/course_builder_tool');
+      output = await handleCourseBuilderTool(db, userId, decision.action, decision.params);
+    } else if (decision.tool === 'document_formatter') {
+      const { handleDocumentFormatterTool } = require('../tools/document_formatter_tool');
+      output = await handleDocumentFormatterTool(db, userId, decision.action, decision.params, chatId);
     } else {
       // Check if it is a dynamically installed custom tool
       try {

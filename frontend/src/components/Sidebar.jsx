@@ -1,5 +1,5 @@
 import React from 'react';
-import { MessageSquare, Plus, Edit2, X, Calendar, Settings, LogOut, Brain, Network, Send, Sliders } from 'lucide-react';
+import { MessageSquare, Plus, Edit2, X, Calendar, Settings, LogOut, Brain, Network, Send, Sliders, ShieldCheck } from 'lucide-react';
 
 export default function Sidebar({
   user,
@@ -157,15 +157,26 @@ export default function Sidebar({
           <span>Agent Dashboard</span>
         </button>
 
-        <button 
-          className="btn-new-chat" 
-          onClick={() => { setIsEsp32ModalOpen(true); setIsMobileSidebarOpen(false); }} 
+        <button
+          className="btn-new-chat"
+          onClick={() => { setIsEsp32ModalOpen(true); setIsMobileSidebarOpen(false); }}
           style={{ margin: 0 }}
         >
           <Send size={18} />
           <span>Device Messenger</span>
         </button>
-        
+
+        {user?.is_admin && (
+          <button
+            className={`btn-new-chat ${activeTab === 'admin' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('admin'); setIsMobileSidebarOpen(false); }}
+            style={{ margin: 0 }}
+          >
+            <ShieldCheck size={18} />
+            <span>Admin Dashboard</span>
+          </button>
+        )}
+
         <div className="user-profile">
           <span 
             onClick={() => setIsProfileOpen(true)}

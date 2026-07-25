@@ -14,12 +14,8 @@ export default function SettingsModal({
   showOnlineKey,
   setShowOnlineKey,
   onFetchLocalModels,
-  currentUser,
   token
 }) {
-  const [adminUsers, setAdminUsers] = useState([]);
-  const [adminError, setAdminError] = useState('');
-  const [adminSuccess, setAdminSuccess] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [scanResults, setScanResults] = useState([]);
   const [scanError, setScanError] = useState('');
@@ -61,53 +57,6 @@ export default function SettingsModal({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isSettingsOpen, setIsSettingsOpen]);
-
-  useEffect(() => {
-    if (isSettingsOpen && currentUser && currentUser.username === 'admin') {
-      fetchAdminUsers();
-    }
-  }, [isSettingsOpen, currentUser]);
-
-  const fetchAdminUsers = async () => {
-    try {
-      const res = await fetch('/api/settings/admin/users', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setAdminUsers(data);
-      } else {
-        const errData = await res.json();
-        setAdminError(errData.error || 'Failed to fetch users.');
-      }
-    } catch (err) {
-      setAdminError(err.message);
-    }
-  };
-
-  const handleUpdateQuota = async (userId, newQuota) => {
-    setAdminError('');
-    setAdminSuccess('');
-    try {
-      const res = await fetch(`/api/settings/admin/users/${userId}/quota`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ token_quota: parseInt(newQuota, 10) })
-      });
-      if (res.ok) {
-        setAdminSuccess('Quota updated successfully.');
-        fetchAdminUsers();
-      } else {
-        const errData = await res.json();
-        setAdminError(errData.error || 'Failed to update quota.');
-      }
-    } catch (err) {
-      setAdminError(err.message);
-    }
-  };
 
   if (!isSettingsOpen) return null;
 
@@ -423,45 +372,6 @@ export default function SettingsModal({
               />
             </div>
           </div>
-
-          {currentUser && currentUser.username === 'admin' && (
-            <div style={{ borderTop: '1px solid var(--border-glass)', padding: '16px 0 0 0', marginTop: 16 }}>
-              <h4 style={{ marginBottom: 12, fontSize: '0.95rem', color: 'var(--accent-primary)' }}>Admin User Quota Management</h4>
-              {adminError && <div style={{ color: 'var(--error)', fontSize: '0.85rem', marginBottom: 8 }}>{adminError}</div>}
-              {adminSuccess && <div style={{ color: 'var(--success)', fontSize: '0.85rem', marginBottom: 8 }}>{adminSuccess}</div>}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
-                {adminUsers.map(u => (
-                  <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.03)', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border-glass)' }}>
-                    <div>
-                      <div style={{ fontWeight: 550, fontSize: '0.9rem', color: 'var(--text-primary)' }}>{u.username} {u.name ? `(${u.name})` : ''}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>24h Usage: {u.total_used_24h.toLocaleString()} tokens</div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <input
-                        type="number"
-                        className="form-control"
-                        style={{ width: '110px', margin: 0, padding: '4px 8px', fontSize: '0.85rem', height: '32px' }}
-                        defaultValue={u.token_quota}
-                        id={`quota-input-${u.id}`}
-                      />
-                      <button
-                        className="btn-primary"
-                        style={{ padding: '0 12px', fontSize: '0.8rem', margin: 0, height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                        onClick={() => {
-                          const input = document.getElementById(`quota-input-${u.id}`);
-                          if (input) {
-                            handleUpdateQuota(u.id, input.value);
-                          }
-                        }}
-                      >
-                        Set
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           <button
             className="btn-primary"

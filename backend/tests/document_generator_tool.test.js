@@ -39,6 +39,49 @@ describe('markdownToBlocks', () => {
     expect(markdownToBlocks('')).toEqual([]);
     expect(markdownToBlocks('   \n\n  ')).toEqual([]);
   });
+
+  test('parses fenced code blocks as a distinct block, preserving internal lines verbatim', () => {
+    const blocks = markdownToBlocks('## Example\n\n```cpp\nint x = 1;\nint y = 2;\n```\n\nAfter the code.');
+    expect(blocks[0]).toEqual({ type: 'heading', level: 2, runs: [{ text: 'Example' }] });
+    expect(blocks[1]).toEqual({ type: 'code', language: 'cpp', text: 'int x = 1;\nint y = 2;' });
+    expect(blocks[2]).toEqual({ type: 'paragraph', runs: [{ text: 'After the code.' }] });
+  });
+
+  test('parses a pipe table into headers and rows', () => {
+    const blocks = markdownToBlocks('| Type | Example |\n|---|---|\n| int | 1 |\n| float | 1.5 |');
+    expect(blocks[0]).toEqual({
+      type: 'table',
+      headers: ['Type', 'Example'],
+      rows: [['int', '1'], ['float', '1.5']]
+    });
+  });
+
+  test('parses a standalone ![alt](path) line as an image block', () => {
+    const blocks = markdownToBlocks('## Title\n\n![A cute cat](C:/temp/cat.png)\n\nAfter the image.');
+    expect(blocks[1]).toEqual({ type: 'image', alt: 'A cute cat', src: 'C:/temp/cat.png' });
+    expect(blocks[2]).toEqual({ type: 'paragraph', runs: [{ text: 'After the image.' }] });
+  });
+
+  test('parses inline **bold** and `code` spans into flagged runs', () => {
+    const blocks = markdownToBlocks('This is **important** and this is `inline code`.');
+    const runs = blocks[0].runs;
+    expect(runs).toContainEqual({ text: 'important', bold: true });
+    expect(runs).toContainEqual({ text: 'inline code', code: true });
+  });
+
+  test('folds heading levels deeper than 3 (####, #####) into level 3 instead of leaving them unrecognized', () => {
+    const blocks = markdownToBlocks('#### Subsection\n\nBody text.');
+    expect(blocks[0]).toEqual({ type: 'heading', level: 3, runs: [{ text: 'Subsection' }] });
+  });
+
+  test('detects a fenced code block even when the closing fence is not isolated on its own line', () => {
+    // Real model output sometimes embeds a short fenced snippet mid-bullet rather than
+    // putting the fence on its own line - a line-anchored fence regex misses this entirely.
+    const blocks = markdownToBlocks("* Example: ```cpp\nchar grade = 'B';\n``` end of bullet");
+    const codeBlock = blocks.find((b) => b.type === 'code');
+    expect(codeBlock).toBeDefined();
+    expect(codeBlock.text).toContain("char grade = 'B';");
+  });
 });
 
 describe('handleDocumentGeneratorTool', () => {
@@ -100,6 +143,149 @@ describe('handleDocumentGeneratorTool', () => {
     expect(row.filename.endsWith('.pdf')).toBe(true);
     expect(fs.existsSync(row.filepath)).toBe(true);
     expect(row.file_size).toBeGreaterThan(0);
+  });
+
+  test('generate_pdf renders code blocks and tables without throwing', async () => {
+    const output = await handleDocumentGeneratorTool(db, userId, 'generate_pdf', {
+      filename: 'cpp-lesson.pdf',
+      title: 'C++ Basics',
+      content: '## Variables\n\n```cpp\nint x = 1;\n```\n\n| Type | Size |\n|---|---|\n| int | 4 bytes |'
+    });
+
+    expect(output).toContain('Document generated successfully');
+    const row = await db.get('SELECT * FROM generated_documents WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+    expect(fs.existsSync(row.filepath)).toBe(true);
+    expect(row.file_size).toBeGreaterThan(0);
+  });
+
+  test('generate_docx renders code blocks and tables without throwing', async () => {
+    const output = await handleDocumentGeneratorTool(db, userId, 'generate_docx', {
+      filename: 'cpp-lesson.docx',
+      title: 'C++ Basics',
+      content: '## Variables\n\n```cpp\nint x = 1;\n```\n\n| Type | Size |\n|---|---|\n| int | 4 bytes |'
+    });
+
+    expect(output).toContain('Document generated successfully');
+    const row = await db.get('SELECT * FROM generated_documents WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+    expect(fs.existsSync(row.filepath)).toBe(true);
+    expect(row.file_size).toBeGreaterThan(0);
+  });
+
+  describe('image blocks', () => {
+    let imagePath;
+
+    beforeAll(() => {
+      const pngBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        'base64'
+      );
+      imagePath = path.join(process.cwd(), 'generated_documents', 'test-fixture.png');
+      fs.mkdirSync(path.dirname(imagePath), { recursive: true });
+      fs.writeFileSync(imagePath, pngBuffer);
+    });
+
+    afterAll(() => {
+      if (fs.existsSync(imagePath)) fs.rmSync(imagePath);
+    });
+
+    test('generate_pdf renders a local image block without throwing', async () => {
+      const output = await handleDocumentGeneratorTool(db, userId, 'generate_pdf', {
+        filename: 'with-image.pdf',
+        title: 'Illustrated',
+        content: `## Section\n\nSome text.\n\n![A tiny test pixel](${imagePath})\n\nMore text after.`
+      });
+
+      expect(output).toContain('Document generated successfully');
+      const row = await db.get('SELECT * FROM generated_documents WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+      expect(fs.existsSync(row.filepath)).toBe(true);
+      expect(row.file_size).toBeGreaterThan(0);
+    });
+
+    test('generate_docx renders a local image block without throwing', async () => {
+      const output = await handleDocumentGeneratorTool(db, userId, 'generate_docx', {
+        filename: 'with-image.docx',
+        title: 'Illustrated',
+        content: `## Section\n\nSome text.\n\n![A tiny test pixel](${imagePath})\n\nMore text after.`
+      });
+
+      expect(output).toContain('Document generated successfully');
+      const row = await db.get('SELECT * FROM generated_documents WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+      expect(fs.existsSync(row.filepath)).toBe(true);
+      expect(row.file_size).toBeGreaterThan(0);
+    });
+
+    test('generate_pdf silently skips a missing image file rather than throwing', async () => {
+      const output = await handleDocumentGeneratorTool(db, userId, 'generate_pdf', {
+        filename: 'missing-image.pdf',
+        title: 'Missing Image',
+        content: `## Section\n\n![Does not exist](${path.join(process.cwd(), 'generated_documents', 'nope.png')})\n\nStill here.`
+      });
+
+      expect(output).toContain('Document generated successfully');
+    });
+  });
+
+  describe('auto-polish on document creation', () => {
+    let polishUserId;
+
+    beforeAll(async () => {
+      const result = await db.run("INSERT INTO users (username, password_hash) VALUES ('polishuser', 'hashed')");
+      polishUserId = result.lastID;
+      await db.run(
+        `INSERT INTO user_settings (user_id, provider, model_name, local_url, local_api_style) VALUES (?, 'local', 'test-model', 'http://localhost:1234/v1', 'openai')`,
+        [polishUserId]
+      );
+    });
+
+    afterEach(() => {
+      delete global.fetch;
+    });
+
+    test('runs content through an LLM polish pass by default when the user has LLM settings configured', async () => {
+      global.fetch = jest.fn(async () => ({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: '# Polished Title\n\nThis was rewritten by the polish pass.' } }] })
+      }));
+
+      const output = await handleDocumentGeneratorTool(db, polishUserId, 'generate_pdf', {
+        filename: 'rough-draft.pdf',
+        title: 'Rough Draft',
+        content: 'raw unpolished content'
+      });
+
+      expect(output).toContain('Document generated successfully');
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      const row = await db.get('SELECT * FROM generated_documents WHERE user_id = ? ORDER BY id DESC LIMIT 1', [polishUserId]);
+      expect(fs.existsSync(row.filepath)).toBe(true);
+    });
+
+    test('skips the polish pass entirely when skipAutoPolish is set', async () => {
+      global.fetch = jest.fn(async () => { throw new Error('fetch should not have been called'); });
+
+      const output = await handleDocumentGeneratorTool(db, polishUserId, 'generate_pdf', {
+        filename: 'already-polished.pdf',
+        title: 'Already Polished',
+        content: 'content that should pass through unchanged',
+        skipAutoPolish: true
+      });
+
+      expect(output).toContain('Document generated successfully');
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    test('falls back to the original content instead of failing when the polish pass errors', async () => {
+      global.fetch = jest.fn(async () => ({ ok: false, status: 500, text: async () => 'boom' }));
+
+      const output = await handleDocumentGeneratorTool(db, polishUserId, 'generate_pdf', {
+        filename: 'polish-fails.pdf',
+        title: 'Polish Fails',
+        content: 'content that must still get rendered'
+      });
+
+      // 3 attempts inside generateText's own retry loop before giving up and falling back.
+      expect(output).toContain('Document generated successfully');
+    }, 15000);
   });
 
   test('generate_xlsx requires a non-empty sheets array', async () => {

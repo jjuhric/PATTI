@@ -9,9 +9,7 @@ function checkAndFallbackModel(candidate, preferredModel) {
 }
 
 async function selectBestModel(settings = {}, userMessage = '', history = []) {
-  // Keeping qwen2.5-coder-7b-instruct return to preserve test compatibility 
-  // since test assertions strictly check for it across different provider paths.
-  return 'qwen2.5-coder-7b-instruct';
+  return checkAndFallbackModel(settings.modelName, 'qwen2.5-coder-7b-instruct');
 }
 
 module.exports = {

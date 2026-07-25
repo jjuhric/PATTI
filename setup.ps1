@@ -214,6 +214,12 @@ if ($NonInteractive) {
     Write-Host "`n====================================================" -ForegroundColor Cyan
     Write-Host "  Configuration Settings" -ForegroundColor Cyan
     Write-Host "====================================================" -ForegroundColor Cyan
+    Write-Host "REQUIRED for PATTI to start at all:" -ForegroundColor Yellow
+    Write-Host "  - JWT_SECRET and DB_ENCRYPTION_SECRET (auto-generated below, no action needed)" -ForegroundColor Yellow
+    Write-Host "  - Admin Username / Password (used to log in to the web UI)" -ForegroundColor Yellow
+    Write-Host "  - Local LLM Base URL (where LM Studio/Ollama/etc is running)" -ForegroundColor Yellow
+    Write-Host "Everything else below is OPTIONAL - press Enter to accept the default or leave blank," -ForegroundColor Yellow
+    Write-Host "and you can fill it in later from the Settings page in the app.`n" -ForegroundColor Yellow
 
     $isHostDefaultStr = if ($defaultIsHost -eq "false") { "n" } else { "y" }
     $isHostYN = Read-Host "Is this machine the host? (y/n) [$isHostDefaultStr]"
@@ -351,19 +357,39 @@ if ($buildFeYN -eq "y" -or $buildFeYN -eq "Y") {
     $envContent = $envContent -replace "DEPLOY_MODE=backend-only", "DEPLOY_MODE=backend-only"
 }
 
-# Generate random JWT_SECRET if placeholder exists
-$defaultSecret = "some_long_random_secret_phrase_for_private_ai_assistant"
-if ($envContent -like "*$defaultSecret*") {
+# Save env file
+Set-Content -Path ".env" -Value $envContent
+
+# Generate strong random values for the two secrets the server refuses to start without
+# (backend/middleware/auth.js and backend/utils/crypto.js both hard-exit if these are
+# unset in production). Replaces whatever placeholder value is currently set - matches
+# on a "placeholder_" prefix or an empty value rather than one exact hardcoded string, so
+# this keeps working even if .env.example's placeholder text changes later.
+function New-RandomSecret {
     $bytes = New-Object Byte[] 32
     $rand = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     $rand.GetBytes($bytes)
     $rand.Dispose()
-    $newSecret = ($bytes | ForEach-Object { "{0:x2}" -f $_ }) -join ""
-    $envContent = $envContent.Replace($defaultSecret, $newSecret)
+    return ($bytes | ForEach-Object { "{0:x2}" -f $_ }) -join ""
 }
 
-# Save env file
-Set-Content -Path ".env" -Value $envContent
+function Set-RandomSecretIfPlaceholder ($Key) {
+    $lines = Get-Content ".env"
+    for ($i = 0; $i -lt $lines.Length; $i++) {
+        if ($lines[$i] -match "^$Key=(.*)$") {
+            $currentVal = $Matches[1].Trim()
+            if ($currentVal -eq "" -or $currentVal -like "placeholder_*") {
+                $lines[$i] = "$Key=$(New-RandomSecret)"
+                Write-Log "Generated a new random $Key." "Green"
+            }
+            break
+        }
+    }
+    Set-Content -Path ".env" -Value $lines
+}
+
+Set-RandomSecretIfPlaceholder "JWT_SECRET"
+Set-RandomSecretIfPlaceholder "DB_ENCRYPTION_SECRET"
 
 if ($isHost -eq "true") {
     # 7. Install Dependencies (Host)
