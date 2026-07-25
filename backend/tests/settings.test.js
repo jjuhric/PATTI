@@ -87,7 +87,7 @@ describe('Settings Router Tests', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toHaveProperty('user_id', userId);
     expect(res.body.provider).toBe('local');
-    expect(res.body.model_name).toBe('qwen2.5-coder-7b-instruct');
+    expect(res.body.model_name).toBe('google/gemma-4-e4b');
   });
 
   test('PUT /api/settings - updates user settings configurations', async () => {
@@ -139,7 +139,7 @@ describe('Settings Router Tests', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('qwen2.5-coder-7b-instruct');
+    expect(res.body).toContain('google/gemma-4-e4b');
   });
 
   test('GET /api/settings/local-models - lm-studio style and invalid URL', async () => {

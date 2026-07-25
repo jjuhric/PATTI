@@ -1,39 +1,8 @@
-const os = require('os');
 const net = require('net');
 const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
-
-// Helper to get local subnet
-function getLocalSubnet() {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const netObj of interfaces[name]) {
-      if (netObj.family === 'IPv4' && !netObj.internal) {
-        const parts = netObj.address.split('.');
-        if (parts.length === 4) {
-          return `${parts[0]}.${parts[1]}.${parts[2]}`;
-        }
-      }
-    }
-  }
-  return '192.168.1';
-}
-
-// Get all local IPv4 addresses of this machine, so the scanner doesn't discover and
-// register itself as a remote field node.
-function getLocalIps() {
-  const ips = new Set(['127.0.0.1', 'localhost']);
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const netObj of interfaces[name]) {
-      if (netObj.family === 'IPv4') {
-        ips.add(netObj.address);
-      }
-    }
-  }
-  return ips;
-}
+const { getLocalSubnet, getLocalIps, probeHealth, upsertNode } = require('../utils/network_discovery');
 
 // Fetch all resolved ARP devices
 async function getArpDevices() {
@@ -177,24 +146,11 @@ async function handleNetworkScanner(action, params = {}) {
             name = 'Private AI Assistant Host';
             deviceType = 'Windows/Linux Node';
           } else if (activePorts.includes(80)) {
-            // Check if it's an ESP32
-            let isEsp = false;
-            try {
-              const controller = new AbortController();
-              const tId = setTimeout(() => controller.abort(), 1000);
-              const testRes = await fetch(`http://${ip}/message`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: '' }),
-                signal: controller.signal
-              });
-              clearTimeout(tId);
-              isEsp = testRes.ok;
-            } catch (e) {}
-
-            if (isEsp) {
-              name = 'ESP32 IoT Node';
-              deviceType = 'ESP32';
+            // Only trust a real GET /health response, not a guess based on any open port 80.
+            const health = await probeHealth(ip, 80);
+            if (health !== null) {
+              name = `New Device (${ip})`;
+              deviceType = 'Generic (Health Check)';
             } else {
               name = 'Web Server / Router';
               deviceType = 'HTTP Host';
@@ -216,40 +172,17 @@ async function handleNetworkScanner(action, params = {}) {
     );
   }
 
-  // 4b. Sync active devices to DB
+  // 4b. Sync active devices to DB (reuses the same upsert used by the /scan and /sync
+  // routes and the background daemon, so a rename never gets clobbered here either).
   try {
     const { getDb } = require('../db');
     const db = await getDb();
     for (const dev of activeDevices) {
-      const isUnidentified = dev.deviceType === 'Generic Node';
+      // Don't clutter the Field Nodes list with devices we can't actually identify or act on
+      // (e.g. phones, printers, or other LAN devices that merely have some port open).
+      if (dev.deviceType === 'Generic Node') continue;
       const portVal = dev.ports.includes('8009') ? 8009 : (dev.ports.includes('3000') ? 3000 : 80);
-      const exist = await db.get(
-        'SELECT id, device_type FROM network_nodes WHERE ip_address = ?',
-        [dev.ip]
-      );
-      if (!exist) {
-        // Don't clutter the Field Nodes list with devices we can't actually identify or act on
-        // (e.g. phones, printers, or other LAN devices that merely have some port open).
-        if (isUnidentified) continue;
-        await db.run(
-          'INSERT INTO network_nodes (user_id, node_name, device_type, ip_address, port, is_online, last_seen) VALUES (1, ?, ?, ?, ?, 1, datetime("now"))',
-          [dev.name, dev.deviceType, dev.ip, portVal]
-        );
-      } else if (isUnidentified) {
-        // Don't downgrade a previously-identified device (e.g. a Google Nest speaker) to
-        // "Unknown Device" just because this pass couldn't re-confirm its signature -
-        // mDNS cast discovery in particular is timing-sensitive and can miss a device.
-        await db.run(
-          'UPDATE network_nodes SET is_online = 1, last_seen = datetime("now") WHERE id = ?',
-          [exist.id]
-        );
-      } else {
-        const finalDeviceType = exist.device_type === 'google_home' ? 'google_home' : dev.deviceType;
-        await db.run(
-          'UPDATE network_nodes SET is_online = 1, last_seen = datetime("now"), node_name = ?, device_type = ? WHERE id = ?',
-          [dev.name, finalDeviceType, exist.id]
-        );
-      }
+      await upsertNode(db, 1, dev.ip, { node_name: dev.name, device_type: dev.deviceType, port: portVal });
     }
   } catch (dbErr) {
     console.error('[Network Scanner] DB Sync failed:', dbErr.message);

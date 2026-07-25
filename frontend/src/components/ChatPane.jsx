@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Search, Send, Square, Cpu, CloudSun, Newspaper, FileText, Volume2, VolumeX } from 'lucide-react';
+import { Calendar, Search, Send, Square, Cpu, CloudSun, Newspaper, FileText, Volume2, VolumeX, Paperclip, X, Image as ImageIcon } from 'lucide-react';
 import { marked } from 'marked';
 import ExpandableThoughts from './ExpandableThoughts';
 
@@ -25,6 +25,7 @@ marked.use({
 });
 
 export default function ChatPane({
+  token,
   settings,
   messages,
   activeChatId,
@@ -41,9 +42,61 @@ export default function ChatPane({
   streamStatus
 }) {
   const [editedCommands, setEditedCommands] = useState({});
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [isUploading, setIsUploading] = useState(false);
   const scrollerRef = useRef(null);
   const isAtBottomRef = useRef(true);
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  const handleFilesSelected = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0 || !activeChatId) return;
+
+    setIsUploading(true);
+    for (const file of files) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('chatId', activeChatId);
+
+        const res = await fetch('/api/attachments/upload', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: formData
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          console.error('Attachment upload failed:', data.error);
+          continue;
+        }
+        setPendingAttachments(prev => [...prev, data]);
+      } catch (err) {
+        console.error('Attachment upload failed:', err);
+      }
+    }
+    setIsUploading(false);
+  };
+
+  const handleRemoveAttachment = async (id) => {
+    setPendingAttachments(prev => prev.filter(a => a.id !== id));
+    try {
+      await fetch(`/api/attachments/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+    } catch (err) {
+      console.error('Failed to delete attachment:', err);
+    }
+  };
+
+  const handleSubmitWithAttachments = (e) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    const ids = pendingAttachments.map(a => a.id);
+    setPendingAttachments([]);
+    handleSendMessage(e, null, ids);
+  };
 
   // Auto-grow textarea height
   useEffect(() => {
@@ -57,7 +110,7 @@ export default function ChatPane({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (inputText.trim() && activeChatId && !isStreaming) {
-        handleSendMessage(e);
+        handleSubmitWithAttachments(e);
       }
     }
   };
@@ -310,8 +363,29 @@ export default function ChatPane({
         {messages.map(msg => (
           <div key={msg.id} className={`message-bubble-wrapper ${msg.role}`}>
             {msg.thoughts && <ExpandableThoughts thoughts={msg.thoughts} />}
+            {msg.attachments && msg.attachments.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', margin: '4px 0' }}>
+                {msg.attachments.map(att => (
+                  att.kind === 'image' ? (
+                    <img
+                      key={att.id}
+                      src={`/api/attachments/${att.id}/file?token=${token}`}
+                      alt={att.filename}
+                      style={{ maxWidth: 160, maxHeight: 160, borderRadius: 8, border: '1px solid var(--border-glass)' }}
+                    />
+                  ) : (
+                    <span
+                      key={att.id}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', fontSize: '0.8rem' }}
+                    >
+                      <FileText size={14} /> {att.filename}
+                    </span>
+                  )
+                ))}
+              </div>
+            )}
             {msg.content && msg.content.trim() !== '' && (
-              <div 
+              <div
                 className="message-bubble"
                 dangerouslySetInnerHTML={{ __html: marked.parse(msg.content) }}
               />
@@ -459,7 +533,46 @@ export default function ChatPane({
         <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={handleSendMessage} className="input-pane">
+      {pendingAttachments.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '8px 20px 0' }}>
+          {pendingAttachments.map(att => (
+            <div
+              key={att.id}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', fontSize: '0.8rem' }}
+            >
+              {att.kind === 'image' ? <ImageIcon size={14} /> : <FileText size={14} />}
+              <span>{att.filename}</span>
+              <button
+                type="button"
+                onClick={() => handleRemoveAttachment(att.id)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', padding: 0 }}
+                title="Remove attachment"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmitWithAttachments} className="input-pane">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/*,.pdf,.docx,.txt,.md"
+          style={{ display: 'none' }}
+          onChange={handleFilesSelected}
+        />
+        <button
+          type="button"
+          className="btn-icon"
+          onClick={() => fileInputRef.current && fileInputRef.current.click()}
+          disabled={!activeChatId || isStreaming || isUploading}
+          title="Attach image or document"
+        >
+          <Paperclip size={18} />
+        </button>
         <div className="input-box">
           <textarea
             ref={textareaRef}

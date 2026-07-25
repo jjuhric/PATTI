@@ -2,11 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 const PDFDocument = require('pdfkit');
-const { Document, Packer, Paragraph, TextRun, HeadingLevel, ExternalHyperlink } = require('docx');
+const { Document, Packer, Paragraph, TextRun, HeadingLevel, ExternalHyperlink, Table, TableRow, TableCell, WidthType, BorderStyle, ImageRun, AlignmentType } = require('docx');
 const ExcelJS = require('exceljs');
 const PptxGenJS = require('pptxgenjs');
+const { imageSize } = require('image-size');
 const { JWT_SECRET } = require('../middleware/auth');
 const { markdownToBlocks } = require('../utils/markdownToBlocks');
+const { buildSettingsForUser } = require('../utils/llm_text');
+const { reformatMarkdown } = require('../utils/document_reformatter');
 
 const HEADING_SIZES = { 1: 20, 2: 16, 3: 13 };
 const DOCX_HEADING_LEVELS = { 1: HeadingLevel.HEADING_1, 2: HeadingLevel.HEADING_2, 3: HeadingLevel.HEADING_3 };
@@ -41,13 +44,37 @@ async function handleDocumentGeneratorTool(db, userId, action, params = {}) {
     let ext;
 
     if (action === 'generate_pdf' || action === 'generate_docx') {
-      const { content } = params;
+      const { content, skipAutoPolish } = params;
       if (!content || typeof content !== 'string' || !content.trim()) {
         return 'Error: "content" parameter is required for this action.';
       }
-      const blocks = markdownToBlocks(content);
-      ext = action === 'generate_pdf' ? 'pdf' : 'docx';
-      buffer = ext === 'pdf' ? await buildPdf(title || filename, blocks) : await buildDocx(title || filename, blocks);
+
+      // Every PDF/DOCX PATTI creates gets one automatic "polish" pass - proper headings,
+      // real code fences/tables, and a couple of illustrative images - unless the caller has
+      // already done this itself (document_formatter_tool.js sets skipAutoPolish to avoid a
+      // redundant second LLM rewrite of content it already polished). Never let a failure here
+      // (no LLM configured, network hiccup, etc.) block document creation - fall back to the
+      // caller's original content.
+      let finalContent = content;
+      let cleanupImages = null;
+      if (!skipAutoPolish) {
+        try {
+          const settings = await buildSettingsForUser(db, userId);
+          const polished = await reformatMarkdown(settings, content, { imageCount: 2 });
+          finalContent = polished.markdown;
+          cleanupImages = polished.cleanup;
+        } catch (err) {
+          console.error('Document generator auto-polish skipped (using original content):', err.message);
+        }
+      }
+
+      try {
+        const blocks = markdownToBlocks(finalContent);
+        ext = action === 'generate_pdf' ? 'pdf' : 'docx';
+        buffer = ext === 'pdf' ? await buildPdf(title || filename, blocks) : await buildDocx(title || filename, blocks);
+      } finally {
+        if (cleanupImages) cleanupImages();
+      }
     } else if (action === 'generate_xlsx') {
       const { sheets } = params;
       if (!Array.isArray(sheets) || sheets.length === 0) {
@@ -127,6 +154,12 @@ function renderBlocksToPdf(doc, blocks) {
     } else if (block.type === 'bullet') {
       doc.fontSize(11).text('•  ', { continued: true });
       renderPdfRuns(doc, block.runs);
+    } else if (block.type === 'code') {
+      renderPdfCodeBlock(doc, block);
+    } else if (block.type === 'table') {
+      renderPdfTable(doc, block);
+    } else if (block.type === 'image') {
+      renderPdfImage(doc, block);
     } else {
       doc.fontSize(11).moveDown(0.3);
       renderPdfRuns(doc, block.runs);
@@ -139,19 +172,158 @@ function renderPdfRuns(doc, runs) {
     const opts = { continued: i < runs.length - 1 };
     if (run.url) {
       doc.fillColor('#1a73e8').text(run.text, { ...opts, link: run.url, underline: true }).fillColor('black');
+    } else if (run.code) {
+      doc.font('Courier').text(run.text, opts).font('Helvetica');
+    } else if (run.bold) {
+      doc.font('Helvetica-Bold').text(run.text, opts).font('Helvetica');
     } else {
       doc.text(run.text, opts);
     }
   });
 }
 
+function renderPdfCodeBlock(doc, block) {
+  doc.moveDown(0.3);
+  const fontSize = 9;
+  const padding = 8;
+  const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const textWidth = usableWidth - padding * 2;
+  const text = block.text || '';
+
+  doc.font('Courier').fontSize(fontSize);
+  const textHeight = doc.heightOfString(text, { width: textWidth });
+  const boxHeight = textHeight + padding * 2;
+
+  if (doc.y + boxHeight > doc.page.height - doc.page.margins.bottom) {
+    doc.addPage();
+  }
+  const x = doc.page.margins.left;
+  const y = doc.y;
+  doc.rect(x, y, usableWidth, boxHeight).fill('#f2f2f2');
+  doc.fillColor('black').text(text, x + padding, y + padding, { width: textWidth, lineBreak: true });
+
+  doc.x = doc.page.margins.left;
+  doc.y = y + boxHeight;
+  doc.font('Helvetica').fontSize(11);
+  doc.moveDown(0.5);
+}
+
+function renderPdfImage(doc, block) {
+  doc.moveDown(0.3);
+  const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const maxHeight = 320;
+
+  let buffer;
+  try {
+    buffer = fs.readFileSync(block.src);
+  } catch (err) {
+    return; // Missing/unreadable image file - skip it rather than fail the whole document.
+  }
+
+  let dims;
+  try {
+    dims = imageSize(buffer);
+  } catch (err) {
+    return; // Not a decodable image - skip it.
+  }
+
+  // Never upscale beyond the image's native size, only shrink to fit.
+  const scale = Math.min(usableWidth / dims.width, maxHeight / dims.height, 1);
+  const width = Math.round(dims.width * scale);
+  const height = Math.round(dims.height * scale);
+
+  if (doc.y + height + 20 > doc.page.height - doc.page.margins.bottom) {
+    doc.addPage();
+  }
+  const x = doc.page.margins.left + (usableWidth - width) / 2;
+  const y = doc.y;
+  doc.image(buffer, x, y, { width, height });
+  doc.x = doc.page.margins.left;
+  doc.y = y + height + 4;
+
+  if (block.alt) {
+    doc.font('Helvetica-Oblique').fontSize(9).fillColor('#555555')
+      .text(block.alt, doc.page.margins.left, doc.y, { width: usableWidth, align: 'center' });
+    doc.fillColor('black').font('Helvetica').fontSize(11);
+  }
+  doc.moveDown(0.5);
+}
+
+function renderPdfTable(doc, block) {
+  doc.moveDown(0.3);
+  const startX = doc.page.margins.left;
+  const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const colCount = block.headers.length;
+  const colWidth = usableWidth / colCount;
+  const cellPadding = 5;
+  const fontSize = 10;
+
+  const drawRow = (cells, isHeader) => {
+    doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica').fontSize(fontSize);
+    const cellWidth = colWidth - cellPadding * 2;
+    const rowHeight = Math.max(
+      ...cells.map((cell) => doc.heightOfString(String(cell ?? ''), { width: cellWidth }))
+    ) + cellPadding * 2;
+
+    if (doc.y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+    }
+    const y = doc.y;
+
+    cells.forEach((cell, i) => {
+      const x = startX + i * colWidth;
+      doc.rect(x, y, colWidth, rowHeight).stroke('#cccccc');
+      doc.text(String(cell ?? ''), x + cellPadding, y + cellPadding, { width: cellWidth });
+    });
+
+    doc.x = startX;
+    doc.y = y + rowHeight;
+  };
+
+  drawRow(block.headers, true);
+  block.rows.forEach((row) => drawRow(row, false));
+
+  doc.font('Helvetica').fontSize(11);
+  doc.moveDown(0.5);
+}
+
 async function buildDocx(title, blocks) {
   const children = [
     new Paragraph({ text: title, heading: HeadingLevel.TITLE }),
     ...blocks.map((block) => {
-      const runs = block.runs.map((run) => run.url
-        ? new ExternalHyperlink({ children: [new TextRun({ text: run.text, style: 'Hyperlink' })], link: run.url })
-        : new TextRun(run.text));
+      if (block.type === 'code') {
+        // A raw \n inside a single TextRun does not render as a line break in docx - each
+        // source line needs its own TextRun with an explicit `break`, or a multi-line
+        // snippet collapses onto one unreadable line.
+        const codeLines = block.text.split('\n');
+        const runs = codeLines.map((codeLine, i) => new TextRun({
+          text: codeLine,
+          font: 'Courier New',
+          break: i > 0 ? 1 : 0
+        }));
+        return new Paragraph({
+          children: runs,
+          shading: { fill: 'F2F2F2' },
+          spacing: { after: 200 }
+        });
+      }
+      if (block.type === 'table') {
+        return buildDocxTable(block);
+      }
+      if (block.type === 'image') {
+        return buildDocxImage(block);
+      }
+
+      const runs = block.runs.map((run) => {
+        if (run.url) {
+          return new ExternalHyperlink({ children: [new TextRun({ text: run.text, style: 'Hyperlink' })], link: run.url });
+        }
+        return new TextRun({
+          text: run.text,
+          bold: run.bold || undefined,
+          font: run.code ? 'Courier New' : undefined
+        });
+      });
 
       if (block.type === 'heading') {
         return new Paragraph({ heading: DOCX_HEADING_LEVELS[block.level] || HeadingLevel.HEADING_3, children: runs });
@@ -165,6 +337,46 @@ async function buildDocx(title, blocks) {
 
   const doc = new Document({ sections: [{ children }] });
   return Packer.toBuffer(doc);
+}
+
+function buildDocxImage(block) {
+  let buffer;
+  let dims;
+  try {
+    buffer = fs.readFileSync(block.src);
+    dims = imageSize(buffer);
+  } catch (err) {
+    return new Paragraph({}); // Missing/unreadable/undecodable image - skip it, keep array shape.
+  }
+
+  const maxWidth = 450;
+  const scale = Math.min(maxWidth / dims.width, 1);
+  const width = Math.round(dims.width * scale);
+  const height = Math.round(dims.height * scale);
+
+  const children = [new ImageRun({ data: buffer, type: dims.type, transformation: { width, height } })];
+  if (block.alt) {
+    children.push(new TextRun({ text: block.alt, italics: true, size: 18, color: '555555', break: 1 }));
+  }
+
+  return new Paragraph({ children, alignment: AlignmentType.CENTER, spacing: { after: 200 } });
+}
+
+function buildDocxTable(block) {
+  const noBorder = { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' };
+  const borders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder };
+
+  const makeRow = (cells, isHeader) => new TableRow({
+    children: cells.map((cell) => new TableCell({
+      borders,
+      children: [new Paragraph({ children: [new TextRun({ text: String(cell ?? ''), bold: isHeader })] })]
+    }))
+  });
+
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [makeRow(block.headers, true), ...block.rows.map((row) => makeRow(row, false))]
+  });
 }
 
 async function buildXlsx(sheets) {

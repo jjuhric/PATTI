@@ -1,42 +1,15 @@
 const request = require('supertest');
 const express = require('express');
 
-// Mock os networkInterfaces
-jest.mock('os', () => {
-  const actualOs = jest.requireActual('os');
-  return {
-    ...actualOs,
-    networkInterfaces: jest.fn().mockReturnValue({})
-  };
-});
-
-// Mock net.Socket
-let mockSocketShouldConnect = true;
-jest.mock('net', () => {
-  return {
-    Socket: jest.fn().mockImplementation(() => {
-      const listeners = {};
-      return {
-        setTimeout: jest.fn(),
-        destroy: jest.fn(),
-        connect: jest.fn().mockImplementation(function(port, ip) {
-          if (mockSocketShouldConnect) {
-            if (listeners['connect']) listeners['connect']();
-          } else {
-            if (listeners['timeout']) listeners['timeout']();
-          }
-        }),
-        on: jest.fn().mockImplementation((event, callback) => {
-          listeners[event] = callback;
-        })
-      };
-    })
-  };
-});
+jest.mock('../utils/network_discovery', () => ({
+  checkTcpPort: jest.fn(),
+  discoverAndSyncNodes: jest.fn()
+}));
 
 const nodesRouter = require('../routes/nodes');
 const authMiddleware = require('../middleware/auth');
 const dbModule = require('../db');
+const { discoverAndSyncNodes } = require('../utils/network_discovery');
 
 jest.mock('../middleware/auth', () => ({
   authenticateToken: (req, res, next) => {
@@ -187,35 +160,21 @@ describe('Nodes API', () => {
     expect(res.body.error).toBe('DB read settings error');
   });
 
-  test('POST /api/nodes/scan triggers local LAN scan and returns discovered list', async () => {
-    const os = require('os');
-    os.networkInterfaces.mockReturnValueOnce({
-      eth0: [{ family: 'IPv4', internal: false, address: '192.168.10.50' }]
-    });
-
-    mockSocketShouldConnect = true;
-
-    const originalFetch = global.fetch;
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ success: true, device_type: 'rpi-5-16gb', is_main_host: false })
-    });
+  test('POST /api/nodes/scan delegates to discoverAndSyncNodes and returns its result', async () => {
+    discoverAndSyncNodes.mockResolvedValueOnce([
+      { id: 1, node_name: 'Raspberry Pi', device_type: 'RPi', ip_address: '192.168.10.2', port: 3000 }
+    ]);
 
     const res = await request(app).post('/api/nodes/scan');
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.nodes.length).toBeGreaterThan(0);
-    expect(res.body.nodes[0].ip_address).toContain('192.168.10.');
-    expect(res.body.nodes[0].device_type).toBe('rpi-5-16gb');
-
-    global.fetch = originalFetch;
+    expect(res.body.nodes.length).toBe(1);
+    expect(res.body.nodes[0].ip_address).toBe('192.168.10.2');
+    expect(discoverAndSyncNodes).toHaveBeenCalledWith(mockDb, 1);
   });
 
-  test('POST /api/nodes/scan fallback subnet when networkInterfaces is empty', async () => {
-    const os = require('os');
-    os.networkInterfaces.mockReturnValueOnce({});
-
-    mockSocketShouldConnect = false;
+  test('POST /api/nodes/scan returns an empty list when nothing is discovered', async () => {
+    discoverAndSyncNodes.mockResolvedValueOnce([]);
 
     const res = await request(app).post('/api/nodes/scan');
     expect(res.status).toBe(200);
@@ -224,14 +183,23 @@ describe('Nodes API', () => {
   });
 
   test('POST /api/nodes/scan handles failure errors', async () => {
-    const os = require('os');
-    os.networkInterfaces.mockImplementationOnce(() => {
-      throw new Error('OS network error');
-    });
+    discoverAndSyncNodes.mockRejectedValueOnce(new Error('Scan failed'));
 
     const res = await request(app).post('/api/nodes/scan');
     expect(res.status).toBe(500);
-    expect(res.body.error).toBe('OS network error');
+    expect(res.body.error).toBe('Scan failed');
+  });
+
+  test('POST /api/nodes/sync delegates to the same discoverAndSyncNodes helper', async () => {
+    discoverAndSyncNodes.mockResolvedValueOnce([
+      { id: 2, node_name: 'Living Room Speaker', device_type: 'google_home', ip_address: '192.168.10.9', port: 8009 }
+    ]);
+
+    const res = await request(app).post('/api/nodes/sync');
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.nodes.length).toBe(1);
+    expect(discoverAndSyncNodes).toHaveBeenCalledWith(mockDb, 1);
   });
 
   describe('POST /api/nodes/toggle-screen', () => {

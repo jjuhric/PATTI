@@ -247,6 +247,48 @@ describe('Agent Loop & LLM Stream Unit Tests', () => {
     expect(contents.join('')).toBe('Hi responder output.');
   });
 
+  test('runAgentLoop - threads uploaded images into the final responder message as multimodal content', async () => {
+    routerDecisions = [
+      {
+        thought: 'No tool needed.',
+        tool: 'none',
+        action: '',
+        params: {}
+      }
+    ];
+
+    const testImage = 'data:image/png;base64,AAAABBBB';
+
+    await runAgentLoop({
+      db,
+      userId,
+      provider: 'local',
+      modelName: 'google/gemma-4-e4b',
+      userMessage: 'What is in this image?',
+      images: [testImage],
+      history: [],
+      localApiKey: 'test_key',
+      onThought: jest.fn(),
+      onContent: jest.fn(),
+      onToolCall: jest.fn()
+    });
+
+    const responderCall = global.fetch.mock.calls.find(([url, options]) => {
+      const urlStr = String(url || '');
+      const isChatEndpoint = urlStr.includes('/chat/completions') || urlStr.includes('1234');
+      const isStreaming = options && options.body && JSON.parse(options.body).stream === true;
+      return isChatEndpoint && isStreaming;
+    });
+
+    expect(responderCall).toBeDefined();
+    const body = JSON.parse(responderCall[1].body);
+    const userMsg = body.messages.find(m => m.role === 'user');
+
+    expect(Array.isArray(userMsg.content)).toBe(true);
+    expect(userMsg.content[0]).toEqual({ type: 'text', text: 'What is in this image?' });
+    expect(userMsg.content[1]).toEqual({ type: 'image_url', image_url: { url: testImage } });
+  });
+
   test('runAgentLoop - Anthropic style provider path', async () => {
     routerDecisions = [
       {

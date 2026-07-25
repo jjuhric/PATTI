@@ -22,6 +22,7 @@ New to the codebase or teaching from it? The **[Wiki](https://github.com/[USER]/
 - **Local semantic memory (RAG)** — uploaded documents and stored memories are embedded locally (no data leaves your machine) and retrieved by meaning, not just keyword match.
 - **Local device mesh** — a Windows/Linux main host coordinates lightweight Raspberry Pi and ESP32 field nodes over MQTT, and can discover and cast text-to-speech announcements to Google Nest/Cast speakers on the LAN.
 - **Dynamic tool registry** — new tools can be authored, tested, and mounted into the running agent system at runtime without a rebuild.
+- **Real document generation** — ask for a report, a spreadsheet, a slide deck, or a full multi-lesson course, and PATTI writes the content and saves a real `.pdf`/`.docx`/`.xlsx`/`.pptx` on disk (auto-polished with proper structure and Wikimedia images). It can also reformat a document you've already uploaded into a cleaner new copy, without touching the original.
 
 ---
 
@@ -78,6 +79,8 @@ The React (Vite) frontend talks to a Node.js/Express backend over REST and Serve
    .\setup.ps1
    ```
 4. Open `http://localhost:3000` and complete the Setup Wizard.
+
+`setup.ps1`/`setup.sh` register a background service so PATTI keeps running after you close the terminal. To stop it without uninstalling anything, run `.\stop.ps1` (Windows) or `./stop.sh` (Linux).
 
 Raspberry Pi / ESP32 field nodes, MQTT mesh setup, and full environment variable reference: see **[Installation](https://github.com/[USER]/private_ai/wiki/Installation)**.
 

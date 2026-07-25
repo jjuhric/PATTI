@@ -80,6 +80,9 @@ async function getDb() {
     if (!columns.some(col => col.name === 'timezone')) {
       await dbConnection.run("ALTER TABLE users ADD COLUMN timezone TEXT DEFAULT 'America/Chicago'");
     }
+    if (!columns.some(col => col.name === 'is_admin')) {
+      await dbConnection.run('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
+    }
 
     // Migrate user_settings to add local_key column if missing
     const settingsColumns = await dbConnection.all('PRAGMA table_info(user_settings)');

@@ -185,7 +185,7 @@ describe('LM Studio and Model Selection Tests', () => {
     };
 
     const selected = await selectBestModel(settings, 'write a react component', []);
-    expect(selected).toBe('qwen2.5-coder-7b-instruct');
+    expect(selected).toBe('model-1');
   });
 
   test('selectBestModel offline strict isolation check (does not contact Google/online APIs)', async () => {
@@ -214,7 +214,7 @@ describe('LM Studio and Model Selection Tests', () => {
     };
 
     const selected = await selectBestModel(settings, 'test query', []);
-    expect(selected).toBe('qwen2.5-coder-7b-instruct');
+    expect(selected).toBe('model-1');
 
     // Confirm that no googleapis.com or online endpoints were contacted
     const calls = global.fetch.mock.calls.map(c => c[0]);
@@ -222,14 +222,8 @@ describe('LM Studio and Model Selection Tests', () => {
     expect(onlineCalls.length).toBe(0);
   });
 
-  test('selectBestModel online path calls Gemini and selects optimal online model', async () => {
+  test('selectBestModel online path respects the configured online model', async () => {
     const { selectBestModel } = require('../utils/model_selector');
-
-    mockGenerateContent.mockResolvedValue({
-      response: {
-        text: () => JSON.stringify({ selected_model: 'gemini-2.5-pro', reasoning: 'complex logic' })
-      }
-    });
 
     const settings = {
       provider: 'online',
@@ -239,10 +233,10 @@ describe('LM Studio and Model Selection Tests', () => {
     };
 
     const selected = await selectBestModel(settings, 'design a database schema', []);
-    expect(selected).toBe('qwen2.5-coder-7b-instruct');
+    expect(selected).toBe('gemini-2.5-flash');
   });
 
-  test('selectBestModel online path falls back to default when key is missing or call throws', async () => {
+  test('selectBestModel online path respects the configured model even without a key', async () => {
     const { selectBestModel } = require('../utils/model_selector');
 
     // Case 1: Missing Key
@@ -252,10 +246,9 @@ describe('LM Studio and Model Selection Tests', () => {
       modelName: 'gemini-2.5-flash'
     };
     const selected1 = await selectBestModel(settingsNoKey, 'hello', []);
-    expect(selected1).toBe('qwen2.5-coder-7b-instruct');
+    expect(selected1).toBe('gemini-2.5-flash');
 
-    // Case 2: API Throws
-    mockGenerateContent.mockRejectedValue(new Error('API quota exceeded'));
+    // Case 2: Still respects configured model regardless of downstream API state
     const settingsError = {
       provider: 'online',
       onlineProvider: 'gemini',
@@ -263,7 +256,7 @@ describe('LM Studio and Model Selection Tests', () => {
       onlineKey: 'test-api-key'
     };
     const selected2 = await selectBestModel(settingsError, 'hello', []);
-    expect(selected2).toBe('qwen2.5-coder-7b-instruct');
+    expect(selected2).toBe('gemini-2.5-flash');
   });
 
   test('LM Studio url formatting helpers handle custom host urls', async () => {
@@ -314,7 +307,7 @@ describe('LM Studio and Model Selection Tests', () => {
     };
 
     const selected = await selectBestModel(settings, 'test query', []);
-    expect(selected).toBe('qwen2.5-coder-7b-instruct');
+    expect(selected).toBe('model-1');
   });
 
   test('listLocalModels returns empty list when both native and compat endpoints fail', async () => {
@@ -355,7 +348,7 @@ describe('LM Studio and Model Selection Tests', () => {
     };
 
     const selected = await selectBestModel(settings, 'test query', []);
-    expect(selected).toBe('qwen2.5-coder-7b-instruct');
+    expect(selected).toBe('model-1');
   });
 
   test('GET /api/lmstudio/log-stream returns 403 when user is not main host', async () => {
@@ -469,7 +462,7 @@ describe('LM Studio and Model Selection Tests', () => {
     expect(selected2).toBe('qwen2.5-coder-7b-instruct');
   });
 
-  test('selectBestModel always returns qwen3-8b', async () => {
+  test('selectBestModel returns the configured model unchanged when not blocked', async () => {
     const { selectBestModel } = require('../utils/model_selector');
     const settings = {
       provider: 'local',

@@ -87,9 +87,9 @@ router.get('/', authenticateToken, async (req, res) => {
       local_key: settings.local_key ? maskKey(settings.local_key) : (process.env.LOCAL_LLM_KEY ? maskKey(process.env.LOCAL_LLM_KEY) : ''),
       online_key: settings.online_key ? maskKey(settings.online_key) : (envOnlineKey ? maskKey(envOnlineKey) : ''),
       local_url: settings.local_url || process.env.LOCAL_LLM_URL || 'http://192.168.1.42:1234/v1',
-      preferred_local_model: settings.preferred_local_model || process.env.PREFERRED_LOCAL_MODEL || 'qwen2.5-coder-7b-instruct',
+      preferred_local_model: settings.preferred_local_model || process.env.PREFERRED_LOCAL_MODEL || 'google/gemma-4-e4b',
       preferred_online_model: settings.preferred_online_model || process.env.PREFERRED_ONLINE_MODEL || 'gemini-2.0-flash',
-      supervisor_model: settings.supervisor_model || process.env.SUPERVISOR_MODEL || 'qwen2.5-coder-7b-instruct',
+      supervisor_model: settings.supervisor_model || process.env.SUPERVISOR_MODEL || 'google/gemma-4-e4b',
       working_directory: settings.working_directory || process.env.WORKING_DIRECTORY || defaultWorkingDir,
       is_setup_complete: isSetupComplete
     };
@@ -122,9 +122,9 @@ router.put('/', authenticateToken, async (req, res) => {
     const resolvedWorkingDir = working_directory || existing.working_directory || process.env.WORKING_DIRECTORY || defaultWorkingDir;
 
     let finalProvider = provider || 'local';
-    let finalModelName = model_name || 'qwen2.5-coder-7b-instruct';
-    let finalPreferredLocal = preferred_local_model || 'qwen2.5-coder-7b-instruct';
-    let finalSupervisorModel = supervisor_model || 'qwen2.5-coder-7b-instruct';
+    let finalModelName = model_name || 'google/gemma-4-e4b';
+    let finalPreferredLocal = preferred_local_model || 'google/gemma-4-e4b';
+    let finalSupervisorModel = supervisor_model || 'google/gemma-4-e4b';
 
     await db.run(
       `INSERT INTO user_settings (
@@ -233,8 +233,8 @@ router.get('/local-models', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('Failed to fetch local models:', err.message);
     const fallbackModels = [
-      process.env.PREFERRED_LOCAL_MODEL || 'qwen2.5-coder-7b-instruct',
-      'qwen2.5-coder-7b-instruct'
+      process.env.PREFERRED_LOCAL_MODEL || 'google/gemma-4-e4b',
+      'google/gemma-4-e4b'
     ];
     res.json([...new Set(fallbackModels)]);
   }
@@ -396,64 +396,6 @@ router.post('/test-connection', authenticateToken, async (req, res) => {
     }
   } catch (err) {
     res.status(500).json({ error: `Connection failed: ${err.message}` });
-  }
-});
-
-// Admin endpoint: list users and their token quota/usage
-router.get('/admin/users', authenticateToken, async (req, res) => {
-  if (req.user.username !== 'admin') {
-    return res.status(403).json({ error: 'Access denied: Admin permissions required.' });
-  }
-
-  try {
-    const db = await getDb();
-    const users = await db.all(`
-      SELECT 
-        u.id, 
-        u.username, 
-        u.name, 
-        COALESCE(s.token_quota, 1000000) as token_quota,
-        (
-          SELECT COALESCE(SUM(token_count), 0) 
-          FROM token_usage 
-          WHERE user_id = u.id 
-            AND created_at >= datetime('now', '-24 hours')
-        ) as total_used_24h
-      FROM users u
-      LEFT JOIN user_settings s ON u.id = s.user_id
-    `);
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Admin endpoint: update a specific user's token quota
-router.put('/admin/users/:userId/quota', authenticateToken, async (req, res) => {
-  if (req.user.username !== 'admin') {
-    return res.status(403).json({ error: 'Access denied: Admin permissions required.' });
-  }
-
-  const { userId } = req.params;
-  const { token_quota } = req.body;
-
-  if (token_quota === undefined || isNaN(token_quota) || token_quota < 0) {
-    return res.status(400).json({ error: 'Invalid token quota. Must be a non-negative number.' });
-  }
-
-  try {
-    const db = await getDb();
-    
-    // Upsert quota limit
-    await db.run(`
-      INSERT INTO user_settings (user_id, token_quota)
-      VALUES (?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET token_quota = excluded.token_quota
-    `, [userId, token_quota]);
-
-    res.json({ success: true, message: `Token quota updated successfully for user ${userId}.` });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
   }
 });
 

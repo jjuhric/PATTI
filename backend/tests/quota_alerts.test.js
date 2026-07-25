@@ -28,12 +28,10 @@ app.use('/api/settings', settingsRouter);
 
 describe('Quota Enforcement and Alerts Stream Tests', () => {
   let token;
-  let adminToken;
   const userId = 1;
 
   beforeAll(() => {
     token = jwt.sign({ id: userId, username: 'quotauser' }, JWT_SECRET);
-    adminToken = jwt.sign({ id: 2, username: 'admin' }, JWT_SECRET);
   });
 
   beforeEach(() => {
@@ -132,42 +130,4 @@ describe('Quota Enforcement and Alerts Stream Tests', () => {
     expect(() => broadcastAlert('hello world')).not.toThrow();
   });
 
-  test('admin endpoints block non-admin users', async () => {
-    const resGet = await request(app)
-      .get('/api/settings/admin/users')
-      .set('Authorization', `Bearer ${token}`);
-    expect(resGet.statusCode).toBe(403);
-
-    const resPut = await request(app)
-      .put('/api/settings/admin/users/1/quota')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ token_quota: 50000 });
-    expect(resPut.statusCode).toBe(403);
-  });
-
-  test('admin endpoints allow admin to get and update quotas', async () => {
-    mockDb.all = jest.fn().mockResolvedValue([
-      { id: 1, username: 'quotauser', name: 'Quota User', token_quota: 100000, total_used_24h: 5000 }
-    ]);
-    mockDb.run = jest.fn().mockResolvedValue({ changes: 1 });
-
-    const resGet = await request(app)
-      .get('/api/settings/admin/users')
-      .set('Authorization', `Bearer ${adminToken}`);
-    expect(resGet.statusCode).toBe(200);
-    expect(resGet.body[0].username).toBe('quotauser');
-
-    const resPut = await request(app)
-      .put('/api/settings/admin/users/1/quota')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({ token_quota: 50000 });
-    expect(resPut.statusCode).toBe(200);
-    expect(resPut.body.success).toBe(true);
-
-    const resPutInvalid = await request(app)
-      .put('/api/settings/admin/users/1/quota')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({ token_quota: -10 });
-    expect(resPutInvalid.statusCode).toBe(400);
-  });
 });

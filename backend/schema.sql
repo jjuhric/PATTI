@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
   interests TEXT DEFAULT '[]',
   favorite_teams TEXT DEFAULT '[]',
   timezone TEXT DEFAULT 'America/Chicago',
+  is_admin INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -51,7 +52,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 CREATE TABLE IF NOT EXISTS user_settings (
   user_id INTEGER PRIMARY KEY,
   provider TEXT DEFAULT 'local', -- 'local' or 'gemini' (or 'openai', 'anthropic')
-  model_name TEXT DEFAULT 'qwen2.5-coder-7b-instruct',
+  model_name TEXT DEFAULT 'google/gemma-4-e4b',
   gemini_key TEXT, -- legacy, replaced by online_key
   local_key TEXT,
   local_url TEXT DEFAULT 'http://192.168.1.42:1234/v1',
@@ -220,6 +221,21 @@ CREATE TABLE IF NOT EXISTS generated_documents (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS message_attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  message_id INTEGER, -- NULL until the chat message is actually sent/inserted
+  kind TEXT NOT NULL, -- 'image' | 'document'
+  original_filename TEXT NOT NULL,
+  stored_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  extracted_text TEXT, -- populated for documents only
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS deep_research_jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id TEXT UNIQUE NOT NULL,
@@ -228,6 +244,22 @@ CREATE TABLE IF NOT EXISTS deep_research_jobs (
   mode TEXT NOT NULL DEFAULT 'research', -- 'research' | 'study_guide'
   status TEXT NOT NULL DEFAULT 'running', -- 'running' | 'completed' | 'failed'
   report_path TEXT,
+  error TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS course_generation_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT UNIQUE NOT NULL,
+  user_id INTEGER NOT NULL,
+  topic TEXT NOT NULL,
+  format TEXT NOT NULL DEFAULT 'docx',
+  status TEXT NOT NULL DEFAULT 'running', -- 'running' | 'completed' | 'failed'
+  lesson_count INTEGER,
+  completed_lessons INTEGER DEFAULT 0,
+  output_path TEXT,
   error TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   completed_at DATETIME,

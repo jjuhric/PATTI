@@ -63,8 +63,15 @@ router.post('/login', authLimiter, async (req, res) => {
   }
 });
 
-router.get('/me', authenticateToken, (req, res) => {
-  res.json({ user: req.user });
+router.get('/me', authenticateToken, async (req, res) => {
+  try {
+    const db = await getDb();
+    const user = await db.get('SELECT id, username, is_admin FROM users WHERE id = ?', [req.user.id]);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+    res.json({ user: { id: user.id, username: user.username, is_admin: user.is_admin === 1 } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

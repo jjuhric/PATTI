@@ -85,15 +85,16 @@ async function handleStartResearch(db, userId, params) {
   }
 
   let stdout = '';
+  let stderr = '';
   child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-  child.stderr.on('data', () => {}); // swallowed; failures surface via exit code / 'error' event
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 
   child.on('error', (err) => {
     finishJobWithFailure(db, userId, jobId, cleanTopic, `Research process failed to run: ${err.message}`);
   });
 
   child.on('close', (code) => {
-    finalizeJob(db, userId, jobId, cleanTopic, cleanMode, code, stdout).catch((err) => {
+    finalizeJob(db, userId, jobId, cleanTopic, cleanMode, code, stdout, stderr).catch((err) => {
       console.error('Deep research pro: error finalizing job', err);
     });
   });
@@ -103,9 +104,13 @@ async function handleStartResearch(db, userId, params) {
     'chat (and send a notification) when it\'s done. Tell the user this has started; do not wait or poll for it now.';
 }
 
-async function finalizeJob(db, userId, jobId, topic, mode, exitCode, stdout) {
+async function finalizeJob(db, userId, jobId, topic, mode, exitCode, stdout, stderr) {
   if (exitCode !== 0) {
-    await finishJobWithFailure(db, userId, jobId, topic, `Research process exited with code ${exitCode}.`);
+    const snippet = (stderr || '').trim().slice(-1500);
+    const message = snippet
+      ? `Research process exited with code ${exitCode}.\n${snippet}`
+      : `Research process exited with code ${exitCode}.`;
+    await finishJobWithFailure(db, userId, jobId, topic, message);
     return;
   }
 

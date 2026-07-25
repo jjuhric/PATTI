@@ -300,6 +300,7 @@ async function runAgentLoop({
   modelName,
   supervisorModel,
   userMessage,
+  images = [],
   history,
   geminiKey, // legacy, fallback to onlineKey
   localBaseUrl,
@@ -718,6 +719,7 @@ ${toolOutput}
     localApiKey,
     localApiStyle,
     onlineUrl,
+    images,
     forceMemoryAgent,
     onToolCall,
     onAgentStatus,
@@ -862,7 +864,7 @@ ${toolOutput}
 
     let toolOutput = '';
     try {
-      toolOutput = await runWorkerAgent(targetAgent, settings, JSON.stringify({ task: userMessage }), db, userId);
+      toolOutput = await runWorkerAgent(targetAgent, settings, JSON.stringify({ task: userMessage }), db, userId, chatId);
     } catch (err) {
       toolOutput = `Error getting information: ${err.message}`;
     }
@@ -929,9 +931,17 @@ ${profileDetailsText ? `Here is the user profile details context:\n${profileDeta
         targetStyle = onlineProvider || 'openai';
       }
 
+      let userContent = userMessage;
+      if (images && images.length > 0 && targetStyle !== 'anthropic' && targetStyle !== 'local-gemini') {
+        userContent = [{ type: 'text', text: userMessage }];
+        for (const img of images) {
+          userContent.push({ type: 'image_url', image_url: { url: img } });
+        }
+      }
+
       const messages = [
         { role: 'system', content: responderInstruction },
-        { role: 'user', content: userMessage }
+        { role: 'user', content: userContent }
       ];
 
       await callLocalLLMStream(
@@ -1345,7 +1355,7 @@ If no changes are required and you can proceed without executing the code, then 
       onThought(`Delegating sub-task to Agent "${agentName}": "${subTask}"...\n`);
       if (onAgentStatus) onAgentStatus({ agent: agentName, status: 'active' });
       try {
-        toolOutput = await runWorkerAgent(agentName, settings, subTask, db, userId);
+        toolOutput = await runWorkerAgent(agentName, settings, subTask, db, userId, chatId);
       } catch (err) {
         try {
           const { broadcastAlert } = require('./routes/alerts');
@@ -1561,7 +1571,15 @@ ${accumulatedToolOutputs.length > 0 ? `Here are the gathered report/action resul
         content: msg.content
       });
     }
-    messages.push({ role: 'user', content: userMessage });
+
+    let userContent = userMessage;
+    if (images && images.length > 0 && targetStyle !== 'anthropic' && targetStyle !== 'local-gemini') {
+      userContent = [{ type: 'text', text: userMessage }];
+      for (const img of images) {
+        userContent.push({ type: 'image_url', image_url: { url: img } });
+      }
+    }
+    messages.push({ role: 'user', content: userContent });
 
     await callLocalLLMStream(
       targetUrl,
