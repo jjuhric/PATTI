@@ -2,6 +2,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs = require('fs');
 const path = require('path');
 const logger = require('./logger');
+const { llmFetchSignal } = require('./fetchTimeout');
 
 const AGENT_PROMPTS = new Proxy({}, {
   get(target, prop) {
@@ -199,7 +200,7 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-      signal: settings.abortSignal
+      signal: llmFetchSignal(settings.abortSignal)
     });
 
     if (!res.ok && body.response_format) {
@@ -209,7 +210,7 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        signal: settings.abortSignal
+        signal: llmFetchSignal(settings.abortSignal)
       });
     }
 
@@ -409,7 +410,7 @@ Do NOT include any other text, markdown wrapper, or conversational filler outsid
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-      signal: settings.abortSignal
+      signal: llmFetchSignal(settings.abortSignal)
     });
 
     if (!res.ok && body.response_format) {
@@ -419,7 +420,7 @@ Do NOT include any other text, markdown wrapper, or conversational filler outsid
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        signal: settings.abortSignal
+        signal: llmFetchSignal(settings.abortSignal)
       });
     }
 
@@ -875,7 +876,7 @@ async function runSupervisorTurn(systemPrompt, settings, userMessage) {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-      signal: settings.abortSignal
+      signal: llmFetchSignal(settings.abortSignal)
     });
 
     if (!res.ok) {
