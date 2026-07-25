@@ -1,5 +1,6 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { decrypt } = require('./crypto');
+const { llmFetchSignal } = require('./fetchTimeout');
 
 // Anthropic doesn't share OpenAI's base URL, so give it its own default.
 function defaultOnlineBaseUrl(onlineProvider) {
@@ -124,7 +125,7 @@ async function generateTextRaw(settings, systemPrompt, userPrompt) {
       };
     }
 
-    const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
+    const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: llmFetchSignal() });
     if (!res.ok) {
       const errText = await res.text();
       throw new Error(`LLM error: ${res.status} - ${errText}`);
