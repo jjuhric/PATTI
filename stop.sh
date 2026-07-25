@@ -3,9 +3,9 @@
 # Linux Stop Script for Private AI Assistant (PATTI)
 # Stops all of PATTI's background processes WITHOUT removing anything - the systemd
 # service definition, database, and .env configuration are left in place so re-running
-# `setup.sh` or `sudo systemctl start private-ai` brings everything back exactly as it was.
+# `setup.sh` or `sudo systemctl start patti` brings everything back exactly as it was.
 
-SERVICE_NAME="private-ai"
+SERVICE_NAME="patti"
 
 echo "===================================================="
 echo "  Stopping Private AI Assistant (PATTI)"

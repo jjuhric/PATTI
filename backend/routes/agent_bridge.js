@@ -41,7 +41,7 @@ async function authenticateBridge(req, res, next) {
   const db = await getDb();
 
   // 1. Try to verify as standard JWT
-  const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key_private_ai_assistant_2026';
+  const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key_patti_assistant_2026';
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     const userExists = await db.get('SELECT id FROM users WHERE id = ?', [decoded.id]);

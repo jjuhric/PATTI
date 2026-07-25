@@ -4,10 +4,10 @@
 set -e
 
 # Configuration
-REPO_URL="https://github.com/[USER]/private_ai.git"
+REPO_URL="https://github.com/[USER]/PATTI.git"
 TARGET_PARENT_DIR="$HOME/Documents"
-TARGET_DIR="$TARGET_PARENT_DIR/private_ai"
-SERVICE_NAME="private-ai"
+TARGET_DIR="$TARGET_PARENT_DIR/PATTI"
+SERVICE_NAME="patti"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 # Parse CLI arguments
@@ -106,7 +106,7 @@ if [ "$SKIP_UPDATE" = false ] && [ -f ".env" ]; then
 fi
 
 # 1. Determine if we are already inside a git clone of this repository
-if [ -d ".git" ] && grep -q "private-ai-assistant" package.json 2>/dev/null; then
+if [ -d ".git" ] && grep -q "patti-assistant" package.json 2>/dev/null; then
     TARGET_DIR="$(pwd)"
     TARGET_PARENT_DIR="$(dirname "$TARGET_DIR")"
     log "Detected execution from inside existing clone: $TARGET_DIR"
@@ -482,7 +482,7 @@ else
         mkdir -p node_client
         cat << 'EOF' > node_client/package.json
 {
-  "name": "private-ai-node-client",
+  "name": "patti-node-client",
   "version": "1.0.0",
   "dependencies": {
     "mqtt": "^5.5.0",

@@ -1964,6 +1964,16 @@
             "date": 1784955828593,
             "name": "C:\\Users\\jjuhr\\OneDrive\\Documents\\private_ai\\logs\\app-2026-07-25.log",
             "hash": "ccac7d5dc5ea3419d659a69e172b20e69d973c3b9f993715e9beb9c84f1fd19d"
+        },
+        {
+            "date": 1785004890295,
+            "name": "C:\\Users\\jjuhr\\OneDrive\\Documents\\private_ai\\logs\\app-2026-07-25.log.1",
+            "hash": "7357d1bf2b1d6c537c3f1a8f56a3b278bdd9e1128f01fa77cda896acbc2254c8"
+        },
+        {
+            "date": 1785006691953,
+            "name": "C:\\Users\\jjuhr\\OneDrive\\Documents\\private_ai\\logs\\app-2026-07-25.log.2",
+            "hash": "3e32dbd0a30de07f066b568c260b25bdb50417ba22b90ac6c5d2b9537e0b7699"
         }
     ],
     "hashType": "sha256"

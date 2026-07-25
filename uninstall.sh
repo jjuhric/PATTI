@@ -11,7 +11,7 @@ echo "❌ Uninstalling Private AI Assistant Node"
 echo "============================================="
 
 # 1. Stop and disable systemd service if running
-SERVICE_NAME="private-ai"
+SERVICE_NAME="patti"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 if [ -f "$SERVICE_FILE" ]; then

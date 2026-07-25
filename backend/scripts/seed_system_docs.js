@@ -5,7 +5,7 @@ const { chunkText } = require('../tools/vault_tool');
 const { storeSystemDoc } = require('../utils/embeddings');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
-const WIKI_DIR = path.join(REPO_ROOT, 'private_ai.wiki');
+const WIKI_DIR = path.join(REPO_ROOT, 'PATTI.wiki');
 const VECTOR_STORE_DIR = path.resolve(__dirname, '../../data/vector-store');
 const MANIFEST_PATH = path.join(VECTOR_STORE_DIR, 'system_docs.manifest.json');
 
@@ -78,7 +78,7 @@ async function main(argv = process.argv) {
 
   const docFiles = collectDocFiles();
   if (docFiles.length === 0) {
-    console.warn('[Seed System Docs] No documentation files found (README.md or private_ai.wiki/*.md).');
+    console.warn('[Seed System Docs] No documentation files found (README.md or PATTI.wiki/*.md).');
     return { indexed: [], skipped: [] };
   }
 

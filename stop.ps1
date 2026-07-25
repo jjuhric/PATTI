@@ -16,7 +16,7 @@ $stoppedAnything = $false
 # 1. Stop (and disable, so it doesn't silently come back at next logon) the scheduled
 # task registered by setup.ps1. Disabling rather than unregistering keeps the task
 # definition around so re-running setup.ps1, or Enable-ScheduledTask, restores it.
-$taskName = "PrivateAI-Assistant"
+$taskName = "PATTI-Assistant"
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($task) {
     Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue

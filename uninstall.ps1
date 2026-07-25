@@ -16,7 +16,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 
 if ($isAdmin) {
     Write-Host "Cleaning Windows background tasks..." -ForegroundColor Cyan
-    $tasks = @("PrivateAI-Assistant", "PrivateAI-Updater")
+    $tasks = @("PATTI-Assistant", "PATTI-Updater")
     foreach ($taskName in $tasks) {
         $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
         if ($taskExists) {

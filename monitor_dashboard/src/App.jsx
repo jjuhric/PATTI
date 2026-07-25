@@ -161,7 +161,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
   // Host telemetry and service control states
   const [hostStatus, setHostStatus] = useState(null);
   const [loadingHost, setLoadingHost] = useState(false);
-  const [restartServiceName, setRestartServiceName] = useState('private-ai');
+  const [restartServiceName, setRestartServiceName] = useState('patti');
   const [restartingService, setRestartingService] = useState(false);
 
    // Scanner and Walkthrough State
@@ -1396,12 +1396,12 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                       <li>Open a terminal on your Raspberry Pi.</li>
                       <li>Clone the project repository:<br />
                         <code style={{ background: '#0f172a', padding: '2px 6px', borderRadius: '4px', display: 'block', margin: '4px 0', color: '#38bdf8' }}>
-                          git clone https://github.com/[USER]/private_ai.git
+                          git clone https://github.com/[USER]/PATTI.git
                         </code>
                       </li>
                       <li>Run the setup script:<br />
                         <code style={{ background: '#0f172a', padding: '2px 6px', borderRadius: '4px', display: 'block', margin: '4px 0', color: '#38bdf8' }}>
-                          cd private_ai && ./setup.sh
+                          cd PATTI && ./setup.sh
                         </code>
                       </li>
                       <li>Choose <strong>Field Node</strong> (Option 2) when prompted for role, and select your Raspberry Pi device type.</li>
@@ -1433,12 +1433,12 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                     <ol style={{ paddingLeft: '20px', margin: '0 0 10px 0' }}>
                       <li>Clone the project repository in PowerShell:<br />
                         <code style={{ background: '#0f172a', padding: '2px 6px', borderRadius: '4px', display: 'block', margin: '4px 0', color: '#38bdf8' }}>
-                          git clone https://github.com/[USER]/private_ai.git
+                          git clone https://github.com/[USER]/PATTI.git
                         </code>
                       </li>
                       <li>Navigate to the folder and execute setup:<br />
                         <code style={{ background: '#0f172a', padding: '2px 6px', borderRadius: '4px', display: 'block', margin: '4px 0', color: '#38bdf8' }}>
-                          cd private_ai && .\setup.ps1
+                          cd PATTI && .\setup.ps1
                         </code>
                       </li>
                       <li>Answer <strong>No (n)</strong> to the Main Host role prompt to install it as a Field Node.</li>
@@ -1644,7 +1644,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                       className="form-control"
                       value={restartServiceName}
                       onChange={e => setRestartServiceName(e.target.value)}
-                      placeholder="e.g. private-ai"
+                      placeholder="e.g. patti"
                     />
                   </div>
                   <button
