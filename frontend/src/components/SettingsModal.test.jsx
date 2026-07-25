@@ -34,13 +34,21 @@ describe('SettingsModal Component Tests', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  test('renders Local LLM settings and reads model name as read-only', () => {
+  test('renders Local LLM settings with a model dropdown populated from localModels', () => {
     render(<SettingsModal {...defaultProps} />);
-    
+
     expect(screen.getByText('Local LLM Settings (Mandatory)')).toBeInTheDocument();
-    const modelTextInput = screen.getByDisplayValue('qwen2.5-coder-7b-instruct');
-    expect(modelTextInput).toBeInTheDocument();
-    expect(modelTextInput).toHaveAttribute('readonly');
+    const modelSelect = screen.getByDisplayValue('qwen2.5-coder-7b-instruct');
+    expect(modelSelect).toBeInTheDocument();
+    expect(modelSelect.tagName).toBe('SELECT');
+  });
+
+  test('falls back to a free-text model input when no local models have been scanned yet', () => {
+    render(<SettingsModal {...defaultProps} localModels={[]} />);
+
+    const modelInput = screen.getByPlaceholderText('e.g. qwen2.5-coder-7b-instruct');
+    expect(modelInput).toBeInTheDocument();
+    expect(modelInput.tagName).toBe('INPUT');
   });
 
   test('toggling Use Online Model Fallback checkbox shows/hides online settings', () => {
