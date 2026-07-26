@@ -19,6 +19,10 @@ function resetIdleUnloadTimer() {
 }
 
 function startIdleUnloadTimer() {
+  // A PATTI Client has no LLM of its own - the model it "uses" is the Host's,
+  // managed exclusively by the Host through ai_queue.js. Never let a client reach
+  // into (and potentially unload) the Host's model directly, bypassing arbitration.
+  if (process.env.PATTI_ROLE === 'client') return;
   resetIdleUnloadTimer();
   idleUnloadTimer = setTimeout(async () => {
     try {
