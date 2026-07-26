@@ -268,14 +268,14 @@ describe('Multi-Agent System & Tools Tests', () => {
       const platformSpy = jest.spyOn(os, 'platform').mockReturnValue('linux');
       process.env.DEVICE_TYPE_OVERRIDE = 'rpi-5-8gb'; // Just to bypass if it reads from db/env
 
-      const statusRes = await handleHostMachineTool('get_service_status', { service: 'private-ai' });
-      expect(statusRes).toContain('Service Status: private-ai');
+      const statusRes = await handleHostMachineTool('get_service_status', { service: 'patti' });
+      expect(statusRes).toContain('Service Status: patti');
 
-      const logsRes = await handleHostMachineTool('get_journal_logs', { service: 'private-ai', lines: 10 });
-      expect(logsRes).toContain('Journal Logs for private-ai');
+      const logsRes = await handleHostMachineTool('get_journal_logs', { service: 'patti', lines: 10 });
+      expect(logsRes).toContain('Journal Logs for patti');
 
-      const restartRes = await handleHostMachineTool('restart_service', { service: 'private-ai' });
-      expect(restartRes).toContain('Successfully restarted service "private-ai".');
+      const restartRes = await handleHostMachineTool('restart_service', { service: 'patti' });
+      expect(restartRes).toContain('Successfully restarted service "patti".');
 
       platformSpy.mockRestore();
       delete process.env.DEVICE_TYPE_OVERRIDE;
@@ -285,26 +285,26 @@ describe('Multi-Agent System & Tools Tests', () => {
       const os = require('os');
       const platformSpy = jest.spyOn(os, 'platform').mockReturnValue('win32');
 
-      const statusRes = await handleHostMachineTool('get_service_status', { service: 'private-ai' });
+      const statusRes = await handleHostMachineTool('get_service_status', { service: 'patti' });
       expect(statusRes).toContain('Windows Server Task & Process Status');
       expect(statusRes).toContain('Active Node Processes');
 
-      const logsRes = await handleHostMachineTool('get_journal_logs', { service: 'private-ai' });
+      const logsRes = await handleHostMachineTool('get_journal_logs', { service: 'patti' });
       expect(logsRes).toContain('Windows Event Logs (Application - Last 100 entries)');
 
-      const restartRes = await handleHostMachineTool('restart_service', { service: 'private-ai' });
-      expect(restartRes).toContain('Successfully restarted Windows scheduled task "PrivateAI-Assistant"');
+      const restartRes = await handleHostMachineTool('restart_service', { service: 'patti' });
+      expect(restartRes).toContain('Successfully restarted Windows scheduled task "PATTI-Assistant"');
 
       // Test command failures on win32
       global.shouldWindowsCommandsFail = true;
 
-      const statusFail = await handleHostMachineTool('get_service_status', { service: 'private-ai' });
+      const statusFail = await handleHostMachineTool('get_service_status', { service: 'patti' });
       expect(statusFail).toContain('Scheduled Task check failed');
 
-      const logsFail = await handleHostMachineTool('get_journal_logs', { service: 'private-ai' });
+      const logsFail = await handleHostMachineTool('get_journal_logs', { service: 'patti' });
       expect(logsFail).toContain('Error retrieving Windows Event Logs');
 
-      const restartFail = await handleHostMachineTool('restart_service', { service: 'private-ai' });
+      const restartFail = await handleHostMachineTool('restart_service', { service: 'patti' });
       expect(restartFail).toContain('Error restarting Windows service/task');
 
       global.shouldWindowsCommandsFail = false;

@@ -452,7 +452,7 @@ if ($isHost -eq "true") {
         if (-not (Test-Path "node_client/package.json")) {
             $clientPkgJson = @'
 {
-  "name": "private-ai-node-client",
+  "name": "patti-node-client",
   "version": "1.0.0",
   "dependencies": {
     "mqtt": "^5.5.0",
@@ -472,7 +472,7 @@ if ($isHost -eq "true") {
 # 10. Register Startup Task
 Write-Log "Configuring Windows background service..."
 $scriptRoot = Resolve-Path "."
-$taskName = "PrivateAI-Assistant"
+$taskName = "PATTI-Assistant"
 $taskStarted = $false
 
 try {

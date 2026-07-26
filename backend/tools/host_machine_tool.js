@@ -224,8 +224,8 @@ async function handleHostMachineTool(action, params = {}, userId = 1) {
       if (platform === 'win32') {
         let taskOutput = '';
         try {
-          const { stdout } = await execPromise(`powershell -Command "Get-ScheduledTask -TaskName PrivateAI-Assistant -ErrorAction SilentlyContinue | Select-Object TaskName, State | Format-List"`);
-          taskOutput = stdout.trim() || 'Scheduled Task "PrivateAI-Assistant" not found.';
+          const { stdout } = await execPromise(`powershell -Command "Get-ScheduledTask -TaskName PATTI-Assistant -ErrorAction SilentlyContinue | Select-Object TaskName, State | Format-List"`);
+          taskOutput = stdout.trim() || 'Scheduled Task "PATTI-Assistant" not found.';
         } catch (e) {
           taskOutput = `Scheduled Task check failed: ${e.message}`;
         }
@@ -287,9 +287,9 @@ async function handleHostMachineTool(action, params = {}, userId = 1) {
       const platform = os.platform();
       if (platform === 'win32') {
         try {
-          await execPromise(`powershell -Command "Stop-ScheduledTask -TaskName PrivateAI-Assistant -ErrorAction SilentlyContinue"`);
-          await execPromise(`powershell -Command "Start-ScheduledTask -TaskName PrivateAI-Assistant -ErrorAction SilentlyContinue"`);
-          return `Successfully restarted Windows scheduled task "PrivateAI-Assistant".`;
+          await execPromise(`powershell -Command "Stop-ScheduledTask -TaskName PATTI-Assistant -ErrorAction SilentlyContinue"`);
+          await execPromise(`powershell -Command "Start-ScheduledTask -TaskName PATTI-Assistant -ErrorAction SilentlyContinue"`);
+          return `Successfully restarted Windows scheduled task "PATTI-Assistant".`;
         } catch (e) {
           try {
             await execPromise(`powershell -Command "Restart-Service -Name ${service} -Force"`);

@@ -6,7 +6,7 @@ jest.mock('../utils/embeddings', () => ({
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const README_PATH = path.join(REPO_ROOT, 'README.md');
-const WIKI_DIR = path.join(REPO_ROOT, 'private_ai.wiki');
+const WIKI_DIR = path.join(REPO_ROOT, 'PATTI.wiki');
 const MANIFEST_PATH = path.resolve(__dirname, '../../data/vector-store', 'system_docs.manifest.json');
 
 jest.mock('fs', () => {

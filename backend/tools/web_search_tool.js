@@ -285,7 +285,7 @@ async function searchWikipedia(query) {
     const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`;
     const res = await fetch(wikiUrl, {
       headers: {
-        'User-Agent': 'PrivateAIAssistant/1.1 (contact@privateai.assistant; mailto:support@privateai.assistant)'
+        'User-Agent': 'PATTI-Assistant/1.1 (contact@patti.assistant; mailto:support@patti.assistant)'
       }
     });
     if (res.ok) {

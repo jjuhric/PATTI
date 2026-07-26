@@ -10,7 +10,7 @@ describe('SudoModal Component Tests', () => {
         isOpen={false} 
         onClose={vi.fn()} 
         onSubmit={vi.fn()} 
-        command="sudo systemctl restart private-ai" 
+        command="sudo systemctl restart patti" 
       />
     );
     expect(container.firstChild).toBeNull();
@@ -22,12 +22,12 @@ describe('SudoModal Component Tests', () => {
         isOpen={true} 
         onClose={vi.fn()} 
         onSubmit={vi.fn()} 
-        command="sudo systemctl restart private-ai" 
+        command="sudo systemctl restart patti" 
       />
     );
 
     expect(screen.getByText('Elevated Privileges Required')).toBeInTheDocument();
-    expect(screen.getByText('sudo systemctl restart private-ai')).toBeInTheDocument();
+    expect(screen.getByText('sudo systemctl restart patti')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Enter password')).toBeInTheDocument();
   });
 
@@ -38,7 +38,7 @@ describe('SudoModal Component Tests', () => {
         isOpen={true} 
         onClose={vi.fn()} 
         onSubmit={mockOnSubmit} 
-        command="sudo systemctl restart private-ai" 
+        command="sudo systemctl restart patti" 
       />
     );
 

@@ -48,7 +48,7 @@ jest.mock('../utils/agents', () => ({
   AGENT_PROMPTS: {}
 }));
 
-const JWT_SECRET = 'dev_secret_key_private_ai_assistant_2026';
+const JWT_SECRET = 'dev_secret_key_patti_assistant_2026';
 const testToken = jwt.sign({ id: 1 }, JWT_SECRET);
 
 describe('agent_bridge.js API Endpoint Tests', () => {

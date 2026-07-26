@@ -118,7 +118,7 @@ export default function ChatPane({
   const [voiceEnabled, setVoiceEnabled] = useState(() => {
     try {
       if (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function') {
-        return localStorage.getItem('private_ai_voice_enabled') === 'true';
+        return localStorage.getItem('patti_voice_enabled') === 'true';
       }
     } catch (e) {}
     return false;
@@ -129,7 +129,7 @@ export default function ChatPane({
   useEffect(() => {
     try {
       if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
-        localStorage.setItem('private_ai_voice_enabled', voiceEnabled);
+        localStorage.setItem('patti_voice_enabled', voiceEnabled);
       }
     } catch (e) {}
   }, [voiceEnabled]);
