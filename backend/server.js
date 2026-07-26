@@ -81,9 +81,13 @@ const logger = require('./utils/logger');
 getDb().then(async (db) => {
   logger.info('Database initialized successfully.');
   try {
+    // A PATTI Client doesn't manage the field-node mesh (that's the Host's job) and
+    // has no broker of its own to reach - skip MQTT entirely to avoid a permanent
+    // reconnect loop against an unreachable localhost broker.
+    if (process.env.PATTI_ROLE !== 'client') {
     // Initialize MQTT client
     mqttService.init();
-    
+
     mqttService.subscribe('nodes/heartbeat', async (payload) => {
       try {
         if (!payload || !payload.nodeId) return;
@@ -114,6 +118,7 @@ getDb().then(async (db) => {
         logger.error('[MQTT] Error processing node heartbeat:', err);
       }
     });
+    }
 
     // Probe and log node identity
     const nodeIdentity = require('./services/node_identity');
@@ -218,7 +223,11 @@ app.get('/monitor', (req, res, next) => {
 });
 app.use('/monitor', express.static(monitorBuildPath));
 app.get('/monitor/*', (req, res) => {
-  res.sendFile(path.join(monitorBuildPath, 'index.html'));
+  const monitorIndexPath = path.join(monitorBuildPath, 'index.html');
+  if (!fs.existsSync(monitorIndexPath)) {
+    return res.status(404).send('Monitor dashboard not built on this device. Run "npm run build" in monitor_dashboard folder.');
+  }
+  res.sendFile(monitorIndexPath);
 });
 
 // Serve dynamically generated TTS audio files
