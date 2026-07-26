@@ -94,7 +94,7 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
       frequency_penalty: 0.3,
       presence_penalty: 0.1,
       stream: true,
-      ...(localStyle === 'lm-studio' ? { num_ctx: 16384 } : {})
+      ...(localStyle === 'lm-studio' ? { num_ctx: 32768 } : {})
     };
   }
 
