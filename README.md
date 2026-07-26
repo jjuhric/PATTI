@@ -1,4 +1,4 @@
-# PATTI — Private AI Assistant (v5.3.0)
+# PATTI — Private AI Assistant (v5.4.0)
 
 <p align="center">
   <img src="assets/logo_text.jpg" alt="PATTI Logo" width="380" />
@@ -21,6 +21,7 @@ New to the codebase or teaching from it? The **[Wiki](https://github.com/[USER]/
 - **Human-in-the-loop safety** — before running a shell command or writing a file, the assistant pauses and asks for your explicit approval.
 - **Local semantic memory (RAG)** — uploaded documents and stored memories are embedded locally (no data leaves your machine) and retrieved by meaning, not just keyword match.
 - **Local device mesh** — a Windows/Linux main host coordinates lightweight Raspberry Pi and ESP32 field nodes over MQTT, and can discover and cast text-to-speech announcements to Google Nest/Cast speakers on the LAN.
+- **PATTI Client support** — pair a second full PATTI instance (its own UI, its own chat history, e.g. on a Raspberry Pi) to the Host so it can share the Host's LLM. Host-wins arbitration means the Host's own requests are never delayed by a client, and a client mid-generation is cleanly interrupted if the Host needs the LLM.
 - **Dynamic tool registry** — new tools can be authored, tested, and mounted into the running agent system at runtime without a rebuild.
 - **Real document generation** — ask for a report, a spreadsheet, a slide deck, or a full multi-lesson course, and PATTI writes the content and saves a real `.pdf`/`.docx`/`.xlsx`/`.pptx` on disk (auto-polished with proper structure and Wikimedia images). It can also reformat a document you've already uploaded into a cleaner new copy, without touching the original.
 
@@ -68,7 +69,9 @@ The React (Vite) frontend talks to a Node.js/Express backend over REST and Serve
 
 ---
 
-## Quick start (Windows main host)
+## Quick start (Host)
+
+Every device role — Host, PATTI Client, or Node — is set up through a single wizard, `patti-cli.js`.
 
 1. Install [Node.js](https://nodejs.org/) v22+, [Git](https://git-scm.com/), and [LM Studio](https://lmstudio.ai/) or [Ollama](https://ollama.com/).
 2. Load a local model and start its server (LM Studio: **Local Server** tab → **Start Server**).
@@ -76,13 +79,14 @@ The React (Vite) frontend talks to a Node.js/Express backend over REST and Serve
    git clone https://github.com/[USER]/PATTI.git
    cd PATTI
    Set-ExecutionPolicy Bypass -Scope Process -Force
-   .\setup.ps1
+   node patti-cli.js
    ```
-4. Open `http://localhost:3000` and complete the Setup Wizard.
+4. When asked what this machine is, choose **Host**.
+5. Open `http://localhost:3000` and complete the Setup Wizard.
 
-`setup.ps1`/`setup.sh` register a background service so PATTI keeps running after you close the terminal. To stop it without uninstalling anything, run `.\stop.ps1` (Windows) or `./stop.sh` (Linux).
+`patti-cli.js` registers a background service so PATTI keeps running after you close the terminal, and offers to open the required firewall ports for you. To stop it without uninstalling anything, run `node patti-cli.js stop`; to remove it entirely, `node patti-cli.js uninstall`.
 
-Raspberry Pi / ESP32 field nodes, MQTT mesh setup, and full environment variable reference: see **[Installation](https://github.com/[USER]/PATTI/wiki/Installation)**.
+To add a **PATTI Client** (a second full PATTI instance, e.g. on a Raspberry Pi, sharing the Host's LLM) or a lightweight **Node** (ESP32/Raspberry Pi sensor device), run `node patti-cli.js` on that device and choose the matching role — see **[Installation](https://github.com/[USER]/PATTI/wiki/Installation)** for the full walkthrough, MQTT mesh setup, and environment variable reference.
 
 ### LAN HTTPS (Android/PWA install)
 

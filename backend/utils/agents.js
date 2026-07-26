@@ -55,7 +55,7 @@ function defaultOnlineBaseUrl(onlineProvider) {
 }
 
 // Reusable function to execute a single LLM decision turn
-async function runAgentTurn(agentName, systemPrompt, settings, userMessage, history) {
+async function runAgentTurn(agentName, systemPrompt, settings, userMessage, history, retriesLeft = 1) {
   const {
     provider,
     modelName,
@@ -192,16 +192,25 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
         temperature: 0.1,
         response_format: { type: "json_object" },
         ...(provider === 'local' ? {} : { max_tokens: targetStyle === 'lm-studio' ? 1024 : 2048 }),
-        ...(targetStyle === 'lm-studio' ? { num_ctx: 32768 } : {})
+        ...(targetStyle === 'lm-studio' ? { num_ctx: 24576 } : {})
       };
     }
 
-    let res = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: llmFetchSignal(settings.abortSignal)
-    });
+    let res;
+    try {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: llmFetchSignal(settings.abortSignal)
+      });
+    } catch (fetchErr) {
+      if (retriesLeft > 0 && !settings.abortSignal?.aborted) {
+        logger.warn(`runAgentTurn fetch exception for agent "${agentName}", retrying (${retriesLeft} attempt(s) left): ${fetchErr.message}`);
+        return runAgentTurn(agentName, systemPrompt, settings, userMessage, history, retriesLeft - 1);
+      }
+      throw fetchErr;
+    }
 
     if (!res.ok && body.response_format) {
       console.warn("Local/OpenAI LLM failed with response_format, retrying without it...");
@@ -216,6 +225,10 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
 
     if (!res.ok) {
       const errText = await res.text();
+      if (retriesLeft > 0 && !settings.abortSignal?.aborted) {
+        logger.warn(`runAgentTurn LLM error for agent "${agentName}", retrying (${retriesLeft} attempt(s) left): ${res.status} - ${errText}`);
+        return runAgentTurn(agentName, systemPrompt, settings, userMessage, history, retriesLeft - 1);
+      }
       throw new Error(`LLM Error: ${res.status} - ${errText}`);
     }
 
@@ -279,7 +292,7 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
   }
 }
 
-async function runAgentResponse(agentName, systemPrompt, settings, userMessage, history, toolOutputs) {
+async function runAgentResponse(agentName, systemPrompt, settings, userMessage, history, toolOutputs, retriesLeft = 1) {
   const {
     provider,
     modelName,
@@ -307,7 +320,7 @@ Generate a response. You MUST return your response as a strict JSON object with 
   "summary": "a brief single-sentence summary of the action/result",
   "data": {} // key-value data of your findings and results
 }
-Do NOT include any other text, markdown wrapper, or conversational filler outside the JSON object.`;
+CRITICAL: The tool outputs above are ALL the information you have - there is no further data coming. Never describe an action as "in progress", "being processed", "underway", or "will be provided shortly". If the tool outputs above do not contain enough information to answer the task, set "status" to "error" and explain in "summary" what information is missing. Do NOT include any other text, markdown wrapper, or conversational filler outside the JSON object.`;
 
   let rawRespText = '';
 
@@ -402,16 +415,25 @@ Do NOT include any other text, markdown wrapper, or conversational filler outsid
         temperature: 0.2,
         response_format: { type: "json_object" },
         ...(provider === 'local' ? {} : { max_tokens: targetStyle === 'lm-studio' ? 1024 : 2048 }),
-        ...(targetStyle === 'lm-studio' ? { num_ctx: 32768 } : {})
+        ...(targetStyle === 'lm-studio' ? { num_ctx: 24576 } : {})
       };
     }
 
-    let res = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: llmFetchSignal(settings.abortSignal)
-    });
+    let res;
+    try {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: llmFetchSignal(settings.abortSignal)
+      });
+    } catch (fetchErr) {
+      if (retriesLeft > 0 && !settings.abortSignal?.aborted) {
+        logger.warn(`runAgentResponse fetch exception for agent "${agentName}", retrying (${retriesLeft} attempt(s) left): ${fetchErr.message}`);
+        return runAgentResponse(agentName, systemPrompt, settings, userMessage, history, toolOutputs, retriesLeft - 1);
+      }
+      throw fetchErr;
+    }
 
     if (!res.ok && body.response_format) {
       console.warn("Local/OpenAI LLM response failed with response_format, retrying without it...");
@@ -425,6 +447,10 @@ Do NOT include any other text, markdown wrapper, or conversational filler outsid
     }
 
     if (!res.ok) {
+      if (retriesLeft > 0 && !settings.abortSignal?.aborted) {
+        logger.warn(`runAgentResponse LLM error for agent "${agentName}", retrying (${retriesLeft} attempt(s) left): ${res.status}`);
+        return runAgentResponse(agentName, systemPrompt, settings, userMessage, history, toolOutputs, retriesLeft - 1);
+      }
       throw new Error(`LLM Error: ${res.status}`);
     }
 
@@ -766,6 +792,32 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
     turn++;
   }
 
+  // Safeguard: web_searcher must never report search results/status without having
+  // actually executed a real web search. Weaker local models sometimes bail out of the
+  // tool-call loop after a preliminary step (e.g. memory recall) and then hallucinate a
+  // "search in progress" status in the final response. Force the real search here so the
+  // final formatter always has genuine data to work with.
+  if (agentName === 'web_searcher' && !toolOutputs.some(t => t.tool === 'search_web')) {
+    let forcedQuery = task;
+    try {
+      const parsedTask = JSON.parse(task);
+      forcedQuery = parsedTask.query || parsedTask.task || task;
+    } catch (e) { }
+
+    let forcedOutput;
+    try {
+      const { handleWebSearchTool } = require('../tools/web_search_tool');
+      forcedOutput = await handleWebSearchTool(db, userId, forcedQuery);
+    } catch (err) {
+      forcedOutput = `Error: search_web failed - ${err.message}`;
+    }
+    let safeForced = typeof forcedOutput === 'string' ? forcedOutput : JSON.stringify(forcedOutput);
+    if (safeForced.length > 3000) {
+      safeForced = safeForced.substring(0, 3000) + "\n... [TRUNCATED: Response too large for context]";
+    }
+    toolOutputs.push({ tool: 'search_web', action: 'search_web', output: safeForced });
+  }
+
   return await runAgentResponse(agentName, systemPrompt, settings, task, history, toolOutputs);
   } finally {
     global.activeAgentOps = Math.max(0, global.activeAgentOps - 1);
@@ -868,7 +920,7 @@ async function runSupervisorTurn(systemPrompt, settings, userMessage) {
         temperature: 0.1,
         response_format: { type: "json_object" },
         ...(provider === 'local' ? {} : { max_tokens: 1024 }),
-        ...(targetStyle === 'lm-studio' ? { num_ctx: 32768 } : {})
+        ...(targetStyle === 'lm-studio' ? { num_ctx: 24576 } : {})
       };
     }
 

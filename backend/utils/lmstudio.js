@@ -143,7 +143,7 @@ async function callLMStudio(messages) {
       // Qwen sampling parameters
       temperature: 0.1, 
       top_p: 0.9,
-      num_ctx: 32768,
+      num_ctx: 24576,
       
       // Ensure structured outputs are strictly maintained for agent handlers
       response_format: { type: "json_object" } 

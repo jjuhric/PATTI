@@ -174,7 +174,13 @@ async function getDb() {
     if (!nodeColumns.some(col => col.name === 'ssh_key')) {
       await dbConnection.run('ALTER TABLE network_nodes ADD COLUMN ssh_key TEXT');
     }
-    
+    if (!nodeColumns.some(col => col.name === 'node_role')) {
+      await dbConnection.run("ALTER TABLE network_nodes ADD COLUMN node_role TEXT DEFAULT 'node'");
+    }
+    // Only one network_nodes row may ever be the PATTI client - enforced at the DB level
+    // via a partial unique index (idempotent for both fresh and legacy databases).
+    await dbConnection.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_single_patti_client ON network_nodes(node_role) WHERE node_role = 'patti_client'");
+
     // Auto-migrate deprecated gemini-1.5-flash entries to gemini-2.0-flash
     await dbConnection.run("UPDATE user_settings SET model_name = 'gemini-2.0-flash' WHERE model_name = 'gemini-1.5-flash'");
     await dbConnection.run("UPDATE user_settings SET preferred_online_model = 'gemini-2.0-flash' WHERE preferred_online_model = 'gemini-1.5-flash'");

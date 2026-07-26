@@ -2,20 +2,12 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const { getDb } = require('../db');
-const { runAgentLoop, generateGreetingAndSave } = require('../ai');
+const { generateGreetingAndSave } = require('../ai');
 const { authenticateToken } = require('../middleware/auth');
 const { checkQuota } = require('../middleware/quotaMiddleware');
 const { getEmbedding } = require('../utils/embeddings');
 const rateLimit = require('express-rate-limit');
 const logger = require('../utils/logger');
-
-// Provider-aware env var fallback: lets a user configure an online key purely
-// via environment variables without touching Settings UI.
-function envKeyForProvider(provider) {
-  if (provider === 'anthropic') return process.env.ANTHROPIC_API_KEY || '';
-  if (provider === 'openai') return process.env.OPENAI_API_KEY || '';
-  return process.env.GEMINI_API_KEY || '';
-}
 
 let idleUnloadTimer = null;
 
@@ -172,6 +164,28 @@ router.get('/chats/:id/messages', authenticateToken, async (req, res) => {
   }
 });
 
+// Lets the frontend grey out the send button proactively when this is a PATTI client and
+// the host is currently busy. Always resolves (never rejects) so a flaky/unreachable host
+// just means the button doesn't grey out in advance - the actual request will still get a
+// clear HOST_BUSY rejection through the normal /chat/stream path either way. No-op on a
+// host/node install (always reports not busy) so the frontend can poll this unconditionally.
+router.get('/chat/llm-status', authenticateToken, async (req, res) => {
+  if (process.env.PATTI_ROLE !== 'client') {
+    return res.json({ busy: false, busyBy: null });
+  }
+  try {
+    const endpoint = `${(process.env.HOST_BRIDGE_URL || '').replace(/\/$/, '')}/api/bridge/llm-status`;
+    const hostRes = await fetch(endpoint, {
+      headers: { 'Authorization': `Bearer ${process.env.HOST_BRIDGE_SECRET}` }
+    });
+    if (!hostRes.ok) return res.json({ busy: false, busyBy: null });
+    const data = await hostRes.json();
+    res.json(data);
+  } catch (err) {
+    res.json({ busy: false, busyBy: null });
+  }
+});
+
 // Agent SSE Stream endpoint
 router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async (req, res) => {
   resetIdleUnloadTimer();
@@ -324,144 +338,75 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
         );
       }
 
-      // Resolve preferred model names dynamically
-      let actualModel = settings.model_name;
-      if (settings.provider === 'local') {
-        actualModel = settings.preferred_local_model || settings.model_name || 'google/gemma-4-e4b';
-      } else if (settings.provider !== 'local' && settings.preferred_online_model) {
-        actualModel = settings.preferred_online_model;
+      let interruptedMessage = null;
+
+      if (process.env.PATTI_ROLE === 'client') {
+        // This device has no LLM of its own - relay the generation through the host,
+        // which arbitrates access via its own ai_queue (host always wins - see
+        // ai_queue.js). Chat history/settings/DB stay entirely local to this device;
+        // the host only lends the LLM for this one turn.
+        const { relayChatStreamFromHost } = require('../services/bridge_chat_relay');
+        await relayChatStreamFromHost({
+          hostBridgeUrl: process.env.HOST_BRIDGE_URL,
+          hostBridgeSecret: process.env.HOST_BRIDGE_SECRET,
+          message: finalMessage,
+          images,
+          history,
+          onThought: (thoughtChunk) => {
+            accumulatedThoughts += thoughtChunk;
+            sendEvent('thought', thoughtChunk);
+          },
+          onContent: (contentChunk) => {
+            accumulatedContent += contentChunk;
+            sendEvent('content', contentChunk);
+          },
+          onToolCall: (toolCall) => sendEvent('tool', toolCall),
+          onAgentStatus: (statusData) => sendEvent('agent_status', statusData),
+          onModelUsed: (model) => sendEvent('model_used', { model }),
+          onCommandApprovalRequired: ({ commandId, command, safety_analysis }) => {
+            sendEvent('command_approval_required', { commandId, command, safety_analysis });
+          },
+          onInterrupted: (message) => {
+            interruptedMessage = message;
+            sendEvent('interrupted', { message });
+          },
+          abortController: streamAbortController
+        });
+      } else {
+        const { runChatStream } = require('../services/chat_stream_handler');
+        await runChatStream({
+          db,
+          userId: req.user.id,
+          chatId,
+          message: finalMessage,
+          images,
+          history,
+          settings,
+          onThought: (thoughtChunk) => {
+            accumulatedThoughts += thoughtChunk;
+            sendEvent('thought', thoughtChunk);
+          },
+          onSystemNotice: (text) => sendEvent('thought', text),
+          onContent: (contentChunk) => {
+            accumulatedContent += contentChunk;
+            sendEvent('content', contentChunk);
+          },
+          onToolCall: (toolCall) => sendEvent('tool', toolCall),
+          onAgentStatus: (statusData) => sendEvent('agent_status', statusData),
+          onModelUsed: (model) => sendEvent('model_used', { model }),
+          onCommandApprovalRequired: ({ commandId, command, safety_analysis }) => {
+            sendEvent('command_approval_required', { commandId, command, safety_analysis });
+          },
+          abortController: streamAbortController,
+          origin: 'host',
+          nodeId: 'chat-ui',
+          taskName: 'User Chat Request'
+        });
       }
 
-      const { decrypt } = require('../utils/crypto');
-      const decryptedLocalKey = decrypt(settings.local_key);
-      const decryptedOnlineKey = decrypt(settings.online_key);
-      const decryptedGeminiKey = decrypt(settings.gemini_key);
-
-      // Trigger Model Selector Agent
-      const { selectBestModel } = require('../utils/model_selector');
-      const selectorSettings = {
-        provider: settings.provider,
-        modelName: actualModel,
-        onlineProvider: settings.online_provider || 'gemini',
-        onlineKey: decryptedOnlineKey || decryptedGeminiKey || envKeyForProvider(settings.online_provider || 'gemini'),
-        geminiKey: decryptedGeminiKey || decryptedOnlineKey || process.env.GEMINI_API_KEY || '',
-        localBaseUrl: settings.local_url || process.env.LOCAL_LLM_URL || 'http://192.168.1.42:1234/v1',
-        localApiKey: decryptedLocalKey || process.env.LOCAL_LLM_KEY || '',
-        localApiStyle: settings.local_api_style || 'openai'
-      };
-
-      let selectedModel = actualModel;
-      try {
-        selectedModel = await selectBestModel(selectorSettings, message, history);
-      } catch (selErr) {
-        console.error('Model selection routing failed:', selErr);
+      if (interruptedMessage && !accumulatedContent.trim()) {
+        accumulatedContent = `⚠️ ${interruptedMessage}`;
       }
-
-      // If local provider and model changed, handle unloading of old and loading of new
-      if (settings.provider === 'local') {
-        const { listLocalModels, loadLocalModel, unloadLocalModel } = require('../utils/lmstudio');
-        const localBaseUrl = selectorSettings.localBaseUrl;
-        const localApiKey = selectorSettings.localApiKey;
-
-        try {
-          const availableModels = await listLocalModels(localBaseUrl, localApiKey);
-          const loadedModelObj = availableModels.find(m => m.isLoaded);
-          const loadedModel = loadedModelObj ? loadedModelObj.id : null;
-
-          if (loadedModel && loadedModel !== selectedModel) {
-            sendEvent('thought', `[System] Unloading model '${loadedModel}' and loading '${selectedModel}'... Please wait.\n`);
-            console.log(`[Model Switcher] Unloading loaded model: ${loadedModel}`);
-            if (loadedModelObj.instanceId) {
-              await unloadLocalModel(localBaseUrl, localApiKey, loadedModelObj.instanceId);
-            }
-            console.log(`[Model Switcher] Loading selected model: ${selectedModel}`);
-            await loadLocalModel(localBaseUrl, localApiKey, selectedModel);
-          } else if (!loadedModel) {
-            // Cold-start load
-            sendEvent('thought', `[System] Loading model '${selectedModel}'... Please wait.\n`);
-            console.log(`[Model Switcher] Cold loading selected model: ${selectedModel}`);
-            await loadLocalModel(localBaseUrl, localApiKey, selectedModel);
-          }
-        } catch (switchErr) {
-          console.error('Local model switching failed:', switchErr);
-          sendEvent('thought', `[System] Warning: Local model switching failed: ${switchErr.message}. Proceeding anyway.\n`);
-        }
-      }
-
-      actualModel = selectedModel;
-
-      // Send the model name to the frontend
-      sendEvent('model_used', { model: actualModel });
-
-      // Broadcast streaming status to Standalone Monitor
-      try {
-        const { broadcastAlert } = require('./alerts');
-        broadcastAlert({ type: 'streaming_status', isStreaming: true });
-      } catch (e) {}
-
-      const { enqueue } = require('../services/ai_queue');
-      await enqueue(async (onThoughtCallback) => {
-        try {
-          await runAgentLoop({
-            db,
-            userId: req.user.id,
-            chatId,
-            provider: settings.provider,
-            modelName: actualModel,
-            supervisorModel: actualModel,
-            userMessage: finalMessage,
-            images,
-            history,
-            localBaseUrl: settings.local_url || process.env.LOCAL_LLM_URL || 'http://192.168.1.42:1234/v1',
-            localApiKey: decryptedLocalKey || process.env.LOCAL_LLM_KEY || '',
-            localApiStyle: settings.local_api_style || 'openai',
-            onlineUrl: settings.online_url,
-            onlineKey: decryptedOnlineKey || decryptedGeminiKey || envKeyForProvider(settings.online_provider || 'gemini'),
-            geminiKey: decryptedGeminiKey || decryptedOnlineKey || process.env.GEMINI_API_KEY || '',
-            onlineProvider: settings.online_provider || 'gemini',
-            isAborted: () => streamAbortController.signal.aborted,
-            abortSignal: streamAbortController.signal,
-            onThought: (thoughtChunk) => {
-              accumulatedThoughts += thoughtChunk;
-              sendEvent('thought', thoughtChunk);
-              onThoughtCallback(thoughtChunk);
-            },
-            onContent: (contentChunk) => {
-              accumulatedContent += contentChunk;
-              sendEvent('content', contentChunk);
-            },
-            onToolCall: (toolCall) => {
-              sendEvent('tool', toolCall);
-              // Broadcast tool call to Standalone Monitor
-              try {
-                const { broadcastAlert } = require('./alerts');
-                broadcastAlert({ type: 'tool_call', toolCall });
-              } catch (e) {}
-            },
-            onAgentStatus: (statusData) => {
-              sendEvent('agent_status', statusData);
-              // Broadcast agent status to Standalone Monitor
-              try {
-                const { broadcastAlert } = require('./alerts');
-                broadcastAlert({
-                  type: 'agent_status',
-                  agent: statusData.agent,
-                  status: statusData.status
-                });
-              } catch (e) {}
-            },
-            onCommandApprovalRequired: ({ commandId, command, safety_analysis }) => {
-              sendEvent('command_approval_required', { commandId, command, safety_analysis });
-            }
-          });
-        } finally {
-          // Broadcast transition to Communication Specialist to Standalone Monitor
-          try {
-            const { broadcastAlert } = require('./alerts');
-            broadcastAlert({ type: 'agent_status', agent: 'communication_specialist', status: 'active' });
-          } catch (e) {}
-        }
-      }, { nodeId: 'chat-ui', name: `User Chat Request` });
 
       // Save assistant response to database
       const { extractThoughts } = require('../utils/helpers');

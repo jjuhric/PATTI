@@ -121,7 +121,7 @@ async function generateTextRaw(settings, systemPrompt, userPrompt) {
         messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
         temperature: 0.4,
         ...(provider === 'local' ? {} : { max_tokens: 4096 }),
-        ...(targetStyle === 'lm-studio' ? { num_ctx: 32768 } : {})
+        ...(targetStyle === 'lm-studio' ? { num_ctx: 24576 } : {})
       };
     }
 

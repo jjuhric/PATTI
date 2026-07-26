@@ -1095,51 +1095,67 @@ describe('Multi-Agent System & Tools Tests', () => {
 
     test('runSupervisorHandoff routes to correct worker and returns output', async () => {
       const globalFetch = global.fetch;
-      
-      global.fetch = jest.fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            choices: [{
-              message: {
-                content: JSON.stringify({
-                  intent: 'search',
-                  refined_data: { query: 'apples' },
-                  next_action: 'delegate_to_web_searcher'
-                })
-              }
-            }]
-          })
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            choices: [{
-              message: {
-                content: JSON.stringify({
-                  thought: 'I will finish now',
-                  tool: 'none',
-                  action: '',
-                  params: {}
-                })
-              }
-            }]
-          })
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            choices: [{
-              message: {
-                content: JSON.stringify({
-                  status: 'success',
-                  summary: 'Mocked worker agent response',
-                  data: {}
-                })
-              }
-            }]
-          })
-        });
+
+      // Worker (web_searcher) decides "tool: none" without ever calling search_web, which
+      // now triggers a forced real search_web call (and its internal DuckDuckGo/Google/
+      // Wikipedia scrape fetches) before the final response is generated. Route by URL so
+      // the LLM chat-completion sequence stays correct regardless of how many extra
+      // non-LLM fetch calls the forced search performs.
+      let llmCallCount = 0;
+      global.fetch = jest.fn((url) => {
+        const isLlmCall = typeof url === 'string' && url.includes('/chat/completions');
+        if (isLlmCall) {
+          llmCallCount++;
+          if (llmCallCount === 1) {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                choices: [{
+                  message: {
+                    content: JSON.stringify({
+                      intent: 'search',
+                      refined_data: { query: 'apples' },
+                      next_action: 'delegate_to_web_searcher'
+                    })
+                  }
+                }]
+              })
+            });
+          } else if (llmCallCount === 2) {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                choices: [{
+                  message: {
+                    content: JSON.stringify({
+                      thought: 'I will finish now',
+                      tool: 'none',
+                      action: '',
+                      params: {}
+                    })
+                  }
+                }]
+              })
+            });
+          }
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              choices: [{
+                message: {
+                  content: JSON.stringify({
+                    status: 'success',
+                    summary: 'Mocked worker agent response',
+                    data: {}
+                  })
+                }
+              }]
+            })
+          });
+        }
+        // Non-LLM fetch calls (the forced search_web scrape attempts) fail gracefully.
+        return Promise.resolve({ ok: false, status: 500, text: async () => '', json: async () => ({}) });
+      });
 
       const mockDb = {
         all: jest.fn().mockResolvedValue([]),
