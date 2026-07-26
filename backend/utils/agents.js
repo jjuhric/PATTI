@@ -665,6 +665,9 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
     } else if (decision.tool === 'sports') {
       const { handleSportsTool } = require('../tools/sports_tool');
       output = await handleSportsTool(db, userId, decision.action, decision.params);
+    } else if (decision.tool === 'movie_tv') {
+      const { handleMovieTvTool } = require('../tools/movie_tv_tool');
+      output = await handleMovieTvTool(db, userId, decision.action, decision.params);
     } else if (decision.tool === 'news') {
       const { handleNewsTool } = require('../tools/news_tool');
       output = await handleNewsTool(db, userId, decision.action, decision.params);

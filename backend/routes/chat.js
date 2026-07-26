@@ -11,6 +11,13 @@ const logger = require('../utils/logger');
 
 let idleUnloadTimer = null;
 
+// How long the system must sit idle before loaded models are freed. Two minutes was aggressive
+// enough that normal conversational pauses unloaded the model, and the next message then paid
+// for a cold reload mid-request - which is what produced "Local LLM returned an empty response
+// after retrying" on an otherwise healthy setup. Fifteen minutes still reclaims VRAM when you
+// walk away without punishing you for thinking for a minute.
+const IDLE_UNLOAD_MS = Number(process.env.IDLE_UNLOAD_MS) || 15 * 60 * 1000;
+
 function resetIdleUnloadTimer() {
   if (idleUnloadTimer) {
     clearTimeout(idleUnloadTimer);
@@ -30,7 +37,7 @@ function startIdleUnloadTimer() {
         return;
       }
 
-      logger.info('[Idle Model Unloader] System idle for 2 minutes. Unloading all loaded models...');
+      logger.info(`[Idle Model Unloader] System idle for ${Math.round(IDLE_UNLOAD_MS / 60000)} minutes. Unloading all loaded models...`);
       const { getDb } = require('../db');
       const db = await getDb();
       const userSettings = await db.get('SELECT * FROM user_settings WHERE user_id = 1');
@@ -69,7 +76,7 @@ function startIdleUnloadTimer() {
     } catch (err) {
       logger.error('[Idle Model Unloader] Error during idle unload:', err);
     }
-  }, 120000); // 2 minutes
+  }, IDLE_UNLOAD_MS);
 }
 
 const streamLimiter = rateLimit({

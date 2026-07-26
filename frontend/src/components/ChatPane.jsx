@@ -198,7 +198,10 @@ export default function ChatPane({
     try {
       const response = await fetch('/api/tts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ text })
       });
       if (!response.ok) {

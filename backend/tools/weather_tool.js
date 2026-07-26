@@ -1,4 +1,9 @@
-const sqlite3 = require('sqlite3');
+// A complete day in the free 3-hour forecast is 8 blocks. Fewer means the day is partial -
+// which is always true for "today", since blocks earlier than now no longer exist. Deriving a
+// daily high/low from a partial day silently reports the remaining hours as if they were the
+// whole day (asking at 3pm reported the 3pm-midnight range as today's high/low), so partial
+// days must be labeled rather than presented as a full-day summary.
+const BLOCKS_PER_COMPLETE_DAY = 8;
 
 function formatUnixTime(dt, timezone = 'America/Chicago', formatOptions = {}) {
   const date = new Date(dt * 1000);
@@ -184,29 +189,41 @@ async function handleWeatherTool(db, userId, action, params) {
   else if (action === 'hourly') {
     // 4-day hourly forecast or standard 5-day/3-hour fallback
     try {
-      let url = `https://pro.openweathermap.org/data/2.5/forecast/hourly?lat=${lat}&lon=${lon}&units=${units}&appid=${apiKey}`;
-      let res = await fetch(url);
-      let data;
-      
-      // Fallback: If Pro API key fails, try the standard 3-hour forecast API
-      if (!res.ok) {
-        console.warn('Hourly forecast (Pro) failed, falling back to standard 3-hour forecast...');
+      let res = null;
+      let isTrueHourly = false;
+
+      // The Pro hourly endpoint needs a paid subscription; fall back to the free 3-hour
+      // forecast when it refuses.
+      const proUrl = `https://pro.openweathermap.org/data/2.5/forecast/hourly?lat=${lat}&lon=${lon}&units=${units}&appid=${apiKey}`;
+      res = await fetch(proUrl);
+      if (res.ok) {
+        isTrueHourly = true;
+      } else {
+        console.warn(`Hourly forecast (Pro) unavailable (status ${res.status}); using the free 3-hour forecast.`);
+        res = null;
+      }
+
+      if (!res) {
         const fallbackUrl = `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&units=${units}&appid=${apiKey}`;
         res = await fetch(fallbackUrl);
         if (!res.ok) {
           throw new Error(`Standard forecast API failed: status ${res.status}`);
         }
       }
-      
-      data = await res.json();
+
+      const data = await res.json();
       const list = data.list || [];
-      
-      let md = `### ⏰ Hourly Weather Forecast for **${cityName}** (Next 24 Hours)\n*Timezone: ${userTimezone}*\n\n`;
+
+      // The free endpoint returns 3-hour blocks, so 24 of them is 3 days - not the 24 hours
+      // the heading used to promise. Take 8 blocks (24 hours) and say which granularity it is.
+      const entriesWanted = isTrueHourly ? 24 : BLOCKS_PER_COMPLETE_DAY;
+      const granularityNote = isTrueHourly ? 'hourly' : '3-hour intervals';
+
+      let md = `### ⏰ Weather Forecast for **${cityName}** (Next 24 Hours, ${granularityNote})\n*Timezone: ${userTimezone}*\n\n`;
       md += `| Time | Temp | Feels Like | Weather | Rain % | Rain (1h) | Wind | Humidity |\n`;
       md += `| --- | --- | --- | --- | --- | --- | --- | --- |\n`;
 
-      // Display up to 24 hourly entries
-      const entries = list.slice(0, 24);
+      const entries = list.slice(0, entriesWanted);
       entries.forEach(item => {
         const formattedTime = formatUnixTime(item.dt, userTimezone, {
           weekday: 'short',
@@ -265,15 +282,22 @@ async function handleWeatherTool(db, userId, action, params) {
     // 16-day daily forecast or standard 5-day forecast averages
     const cnt = params?.cnt || 7;
     try {
-      const url = `https://api.openweathermap.org/data/2.5/forecast/daily?lat=${lat}&lon=${lon}&cnt=${cnt}&units=${units}&appid=${apiKey}`;
-      const res = await fetch(url);
+      let res = null;
       let list = [];
 
-      if (res.ok) {
+      // forecast/daily needs a paid subscription; derive daily values from the free 5-day
+      // 3-hour forecast when it refuses.
+      const url = `https://api.openweathermap.org/data/2.5/forecast/daily?lat=${lat}&lon=${lon}&cnt=${cnt}&units=${units}&appid=${apiKey}`;
+      res = await fetch(url);
+      if (!res.ok) {
+        console.warn(`Daily forecast endpoint unavailable (status ${res.status}); deriving daily values from the free 5-day forecast.`);
+        res = null;
+      }
+
+      if (res) {
         const data = await res.json();
         list = data.list || [];
       } else {
-        console.warn('Daily forecast API failed, calculating daily values from standard 5-day forecast...');
         const fallbackUrl = `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&units=${units}&appid=${apiKey}`;
         const fallbackRes = await fetch(fallbackUrl);
         if (!fallbackRes.ok) {
@@ -308,6 +332,11 @@ async function handleWeatherTool(db, userId, action, params) {
           
           list.push({
             dt: middayPoint.dt,
+            // "Today" only ever has the blocks that haven't happened yet, so its min/max
+            // describe the remainder of the day, not the whole day. Flag it so the rendered
+            // table can say so instead of reporting a wrong daily high.
+            isPartialDay: points.length < BLOCKS_PER_COMPLETE_DAY,
+            coverageFrom: points[0].dt,
             temp: {
               day: parseFloat(avgDay.toFixed(1)),
               min: parseFloat(min.toFixed(1)),
@@ -328,8 +357,14 @@ async function handleWeatherTool(db, userId, action, params) {
       md += `| Date | Temp (Day/Night) | Range (Min/Max) | Weather | Humidity | Wind | Rain |\n`;
       md += `| --- | --- | --- | --- | --- | --- | --- |\n`;
 
+      let hasPartialDay = false;
       list.forEach(item => {
-        const formattedDate = formatUnixTime(item.dt, userTimezone, { weekday: 'short', month: 'short', day: 'numeric' });
+        let formattedDate = formatUnixTime(item.dt, userTimezone, { weekday: 'short', month: 'short', day: 'numeric' });
+        if (item.isPartialDay) {
+          hasPartialDay = true;
+          const from = formatUnixTime(item.coverageFrom, userTimezone, { hour: '2-digit', minute: '2-digit', hour12: true });
+          formattedDate += ` *(from ${from} only)*`;
+        }
         const dayTemp = item.temp.day;
         const nightTemp = item.temp.night;
         const minTemp = item.temp.min;
@@ -341,6 +376,10 @@ async function handleWeatherTool(db, userId, action, params) {
 
         md += `| ${formattedDate} | ${dayTemp}${unitSymbol} / ${nightTemp}${unitSymbol} | ${minTemp}${unitSymbol} - ${maxTemp}${unitSymbol} | ${desc} | ${humidity}% | ${speed} ${speedUnit} | ${rain} mm |\n`;
       });
+
+      if (hasPartialDay) {
+        md += `\n*Note: rows marked "(from ... only)" cover just the remaining part of that day, so their range is not the full-day high/low. For conditions right now, use the current-weather report instead.*\n`;
+      }
 
       return md;
     } catch (err) {
