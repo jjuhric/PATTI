@@ -1,5 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit');
 const { authenticateToken } = require('../middleware/auth');
 const { getDb } = require('../db');
 const { encrypt, decrypt } = require('../utils/crypto');
@@ -24,6 +27,69 @@ router.get('/discovery', async (req, res) => {
   }
 });
 
+const registerClientLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  message: { error: 'Too many pairing attempts from this IP, please try again after 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Self-service PATTI client pairing. The new device has no session yet, so it authenticates
+// with the host admin's own login credentials instead of a JWT. Only one network_nodes row
+// may ever have node_role='patti_client' (enforced by a partial unique index in schema.sql);
+// pass force=true (still requires valid admin credentials) to replace an existing client,
+// e.g. when swapping in new hardware.
+router.post('/register-client', registerClientLimiter, async (req, res) => {
+  const { hostAdminUsername, hostAdminPassword, nodeName, deviceType, ipAddress, port, force } = req.body;
+  if (!hostAdminUsername || !hostAdminPassword || !nodeName || !deviceType || !ipAddress) {
+    return res.status(400).json({ error: 'hostAdminUsername, hostAdminPassword, nodeName, deviceType, and ipAddress are required.' });
+  }
+
+  try {
+    const db = await getDb();
+    const user = await db.get('SELECT * FROM users WHERE username = ?', [hostAdminUsername.trim()]);
+    if (!user) return res.status(401).json({ error: 'Invalid host admin username or password.' });
+
+    const isMatch = await bcrypt.compare(hostAdminPassword, user.password_hash);
+    if (!isMatch) return res.status(401).json({ error: 'Invalid host admin username or password.' });
+
+    const existingClient = await db.get(
+      "SELECT * FROM network_nodes WHERE user_id = ? AND node_role = 'patti_client'",
+      [user.id]
+    );
+    if (existingClient && !force) {
+      return res.status(409).json({
+        error: `A PATTI client ("${existingClient.node_name}" at ${existingClient.ip_address}) is already registered. Only one PATTI client is allowed at a time - retry with force=true to replace it.`,
+        existingClient: { id: existingClient.id, node_name: existingClient.node_name, ip_address: existingClient.ip_address }
+      });
+    }
+    if (existingClient && force) {
+      await db.run('DELETE FROM network_nodes WHERE id = ?', [existingClient.id]);
+    }
+
+    const bridgeSecret = crypto.randomBytes(32).toString('hex');
+    const targetPort = port || 3000;
+
+    const result = await db.run(
+      `INSERT INTO network_nodes (user_id, node_name, device_type, ip_address, port, bridge_secret, last_seen, is_online, node_role)
+       VALUES (?, ?, ?, ?, ?, ?, datetime("now"), 1, 'patti_client')`,
+      [user.id, nodeName, deviceType, ipAddress, targetPort, bridgeSecret]
+    );
+
+    const pkg = require('../../package.json');
+
+    res.json({
+      success: true,
+      nodeId: result.lastID,
+      bridgeSecret,
+      hostVersion: pkg.version
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Authenticated network scan endpoint - discovers real, reachable devices (mDNS Cast,
 // other PATTI nodes, or anything answering GET /health) and syncs them into network_nodes.
 router.post('/scan', authenticateToken, async (req, res) => {
@@ -40,7 +106,7 @@ router.post('/scan', authenticateToken, async (req, res) => {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const db = await getDb();
-    const nodes = await db.all('SELECT id, node_name, device_type, ip_address, port, last_seen, is_online, created_at, ssh_username, ssh_password, ssh_key FROM network_nodes WHERE user_id = ?', [req.user.id]);
+    const nodes = await db.all('SELECT id, node_name, device_type, ip_address, port, last_seen, is_online, created_at, node_role, ssh_username, ssh_password, ssh_key FROM network_nodes WHERE user_id = ?', [req.user.id]);
     const decryptedNodes = nodes.map(node => ({
       ...node,
       ssh_password: node.ssh_password ? decrypt(node.ssh_password) : '',

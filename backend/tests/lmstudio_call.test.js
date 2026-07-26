@@ -34,7 +34,7 @@ describe('LM Studio Integration Tests', () => {
           messages: messages,
           temperature: 0.1,
           top_p: 0.9,
-          num_ctx: 32768,
+          num_ctx: 24576,
           response_format: { type: 'json_object' }
         },
         {

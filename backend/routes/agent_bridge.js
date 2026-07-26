@@ -2,6 +2,18 @@ const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db');
 const jwt = require('jsonwebtoken');
+const logger = require('../utils/logger');
+
+// Gate for endpoints only a registered PATTI client may call - requires the caller to have
+// authenticated via a network_nodes bridge_secret (not the generic BRIDGE_SECRET/local_key
+// fallbacks) tagged with node_role='patti_client', since arbitration needs to know exactly
+// which device originated the request.
+function requirePattiClientRole(req, res, next) {
+  if (!req.bridgeNode || req.bridgeNode.node_role !== 'patti_client') {
+    return res.status(403).json({ error: 'This endpoint is only accessible to a registered PATTI client.' });
+  }
+  next();
+}
 
 // Robust JSON Regex parser helper that handles optional markdown backticks
 function parseAgentJson(rawText) {
@@ -313,6 +325,101 @@ router.post('/supervisor-handoff', authenticateBridge, async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /llm-status - lets a PATTI client check whether the host's shared LLM is busy before
+// (or between) submitting requests, so its UI can grey out the send button proactively.
+router.get('/llm-status', authenticateBridge, async (req, res) => {
+  const aiQueue = require('../services/ai_queue');
+  const state = aiQueue.getState();
+  res.json({ busy: state.isBusy, busyBy: state.busyBy });
+});
+
+// POST /chat-stream - the PATTI client equivalent of the local /api/chat/stream route.
+// Runs one generation turn against the HOST's own configured LLM/settings through the
+// shared ai_queue, which enforces host-wins arbitration (see ai_queue.js): a host request
+// showing up mid-stream aborts this call with HOST_PREEMPTED, and a new client request
+// while the host is active is rejected outright with HOST_BUSY. Both surface as a single
+// 'interrupted' SSE event rather than a generic error. Unlike the local route, this does
+// not touch any chat history/memory tables - the calling client owns saving its own
+// conversation locally; the host only lends the LLM.
+router.post('/chat-stream', authenticateBridge, requirePattiClientRole, async (req, res) => {
+  const { message, images, history } = req.body;
+  if (!message) return res.status(400).json({ error: 'message is required' });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const sendEvent = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 15000);
+  const abortController = new AbortController();
+  req.on('close', () => {
+    abortController.abort();
+    clearInterval(heartbeat);
+  });
+
+  try {
+    const db = await getDb();
+    let settings = await db.get('SELECT * FROM user_settings WHERE user_id = ?', [req.user.id]);
+    if (!settings) settings = { provider: 'local', model_name: 'google/gemma-4-e4b' };
+
+    const { runChatStream } = require('../services/chat_stream_handler');
+    await runChatStream({
+      db,
+      userId: req.user.id,
+      chatId: null,
+      message,
+      images: Array.isArray(images) ? images : [],
+      history: Array.isArray(history) ? history : [],
+      settings,
+      onThought: (chunk) => sendEvent('thought', chunk),
+      onSystemNotice: (text) => sendEvent('thought', text),
+      onContent: (chunk) => sendEvent('content', chunk),
+      onToolCall: (toolCall) => sendEvent('tool', toolCall),
+      onAgentStatus: (statusData) => sendEvent('agent_status', statusData),
+      onModelUsed: (model) => sendEvent('model_used', { model }),
+      onCommandApprovalRequired: ({ commandId, command, safety_analysis }) => {
+        sendEvent('command_approval_required', { commandId, command, safety_analysis });
+      },
+      abortController,
+      origin: 'patti_client',
+      nodeId: `patti-client-${req.bridgeNode.id}`,
+      taskName: `PATTI Client Chat (${req.bridgeNode.node_name})`
+    });
+
+    sendEvent('done', { success: true });
+  } catch (err) {
+    if (err.code === 'HOST_PREEMPTED' || err.code === 'HOST_BUSY') {
+      sendEvent('interrupted', { message: err.message });
+    } else {
+      logger.error('Bridge chat-stream error:', err);
+      sendEvent('error', { message: err.message || 'An error occurred while generating the response.' });
+    }
+  } finally {
+    clearInterval(heartbeat);
+    res.end();
+  }
+});
+
+// POST /approve-command - mirrors the local /api/chat/approve-command route so a PATTI
+// client's user can approve/reject a risky command the agent wants to run on the host,
+// even though the approval prompt is being rendered on the client's own UI.
+router.post('/approve-command', authenticateBridge, requirePattiClientRole, (req, res) => {
+  const { commandId, approved, command, password } = req.body;
+  if (!commandId) return res.status(400).json({ error: 'commandId is required.' });
+
+  const { resolveCommand } = require('../utils/commandApproval');
+  const success = resolveCommand(commandId, approved, command, password);
+  if (success) {
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ error: 'Command not found or already resolved.' });
   }
 });
 

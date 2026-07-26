@@ -115,6 +115,7 @@ function App() {
   const [streamContent, setStreamContent] = useState('');
   const [toolLogs, setToolLogs] = useState([]); // array of active/past tool calls
   const [streamStatus, setStreamStatus] = useState('');
+  const [llmBusy, setLlmBusy] = useState(false); // true only when this is a PATTI client and the host is busy
 
   const messagesEndRef = useRef(null);
 
@@ -233,6 +234,29 @@ function App() {
       setMessages([]);
     }
   }, [activeChatId]);
+
+  // Poll whether the shared LLM is currently busy. A no-op (always reports not busy) unless
+  // this is a PATTI client, so it's safe to run unconditionally - it just greys out the send
+  // button while the host is active, per host-wins arbitration (see ai_queue.js).
+  useEffect(() => {
+    if (!token || isStreaming) return;
+    let cancelled = false;
+    const checkLlmStatus = async () => {
+      try {
+        const res = await fetch('/api/chat/llm-status', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled) setLlmBusy(!!data.busy);
+      } catch (err) {
+        // Fail open - don't block the UI if the status check itself fails
+      }
+    };
+    checkLlmStatus();
+    const interval = setInterval(checkLlmStatus, 5000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [token, isStreaming]);
 
 
   // Auth operations
@@ -851,6 +875,10 @@ function App() {
             } else if (eventType === 'error') {
               console.error(dataValue);
               showToast(`Error: ${dataValue.message}`, 'error');
+            } else if (eventType === 'interrupted') {
+              // Host-wins arbitration preempted or blocked this PATTI client request -
+              // the backend already saves a matching notice as the assistant's message.
+              showToast(dataValue.message || 'Host interrupted your request. Please try again later.', 'error');
             }
           }
         }
@@ -1074,6 +1102,7 @@ function App() {
             messagesEndRef={messagesEndRef}
             handleResolveCommand={handleResolveCommand}
             streamStatus={streamStatus}
+            llmBusy={llmBusy}
           />
         )}
         {activeTab === 'chat' && isChatPoppedOut && (
@@ -1198,6 +1227,7 @@ function App() {
             messagesEndRef={messagesEndRef}
             handleResolveCommand={handleResolveCommand}
             streamStatus={streamStatus}
+            llmBusy={llmBusy}
           />
         </PopoutWindow>
       )}

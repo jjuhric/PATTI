@@ -331,6 +331,7 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
             <thead>
               <tr className="border-b border-base-300 text-left text-neutral-content">
                 <th>Name</th>
+                <th>Role</th>
                 <th>Device Type</th>
                 <th>IP Address</th>
                 <th>Status</th>
@@ -341,6 +342,19 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
               {nodes.map(node => (
                 <tr key={node.id} className="border-b border-base-300">
                   <td className="font-bold">{node.node_name}</td>
+                  <td>
+                    <span
+                      className="badge"
+                      style={node.node_role === 'patti_client'
+                        ? { background: 'var(--accent-primary, #6366f1)', color: '#fff' }
+                        : {}}
+                      title={node.node_role === 'patti_client'
+                        ? 'Full PATTI instance sharing this host\'s LLM'
+                        : 'Lightweight sensor/actuator edge device'}
+                    >
+                      {node.node_role === 'patti_client' ? 'PATTI Client' : 'Node'}
+                    </span>
+                  </td>
                   <td>{node.device_type}</td>
                   <td>{node.ip_address}:{node.port}</td>
                   <td>{node.is_online ? 'Online' : 'Offline'}</td>

@@ -48,6 +48,18 @@ jest.mock('../utils/agents', () => ({
   AGENT_PROMPTS: {}
 }));
 
+// Mock the shared chat-stream handler used by POST /chat-stream
+const mockRunChatStream = jest.fn();
+jest.mock('../services/chat_stream_handler', () => ({
+  runChatStream: (...args) => mockRunChatStream(...args)
+}));
+
+// Mock command approval used by POST /approve-command
+const mockResolveCommand = jest.fn();
+jest.mock('../utils/commandApproval', () => ({
+  resolveCommand: (...args) => mockResolveCommand(...args)
+}));
+
 const JWT_SECRET = 'dev_secret_key_patti_assistant_2026';
 const testToken = jwt.sign({ id: 1 }, JWT_SECRET);
 
@@ -404,6 +416,153 @@ describe('agent_bridge.js API Endpoint Tests', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.supervisor_decision.intent).toBe('search');
       expect(res.body.worker_output).toBe('Sunny, 72 degrees');
+    });
+  });
+
+  describe('GET /llm-status', () => {
+    test('returns the current queue state', async () => {
+      mockDb.get.mockResolvedValueOnce(undefined); // local_key check (authenticateBridge)
+      mockDb.get.mockResolvedValueOnce({ id: 4, user_id: 1, node_name: 'Pi', bridge_secret: 'status-secret', node_role: 'patti_client' });
+
+      const res = await request(app)
+        .get('/api/bridge/llm-status')
+        .set('Authorization', 'Bearer status-secret');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ busy: false, busyBy: null });
+    });
+  });
+
+  describe('POST /chat-stream', () => {
+    test('403 when the caller is not a registered PATTI client', async () => {
+      mockDb.get.mockResolvedValueOnce(undefined);
+      mockDb.get.mockResolvedValueOnce({ id: 4, user_id: 1, node_name: 'Sensor', bridge_secret: 'node-secret', node_role: 'node' });
+
+      const res = await request(app)
+        .post('/api/bridge/chat-stream')
+        .set('Authorization', 'Bearer node-secret')
+        .send({ message: 'hello' });
+
+      expect(res.status).toBe(403);
+    });
+
+    test('400 when message is missing', async () => {
+      mockDb.get.mockResolvedValueOnce(undefined);
+      mockDb.get.mockResolvedValueOnce({ id: 4, user_id: 1, node_name: 'Pi', bridge_secret: 'client-secret', node_role: 'patti_client' });
+
+      const res = await request(app)
+        .post('/api/bridge/chat-stream')
+        .set('Authorization', 'Bearer client-secret')
+        .send({});
+
+      expect(res.status).toBe(400);
+    });
+
+    test('streams thought/content/model_used/done events on success', async () => {
+      mockDb.get.mockResolvedValueOnce(undefined); // local_key check
+      mockDb.get.mockResolvedValueOnce({ id: 4, user_id: 1, node_name: 'Pi', bridge_secret: 'client-secret-2', node_role: 'patti_client' });
+      mockDb.get.mockResolvedValueOnce({ provider: 'local', model_name: 'test-model' }); // user_settings lookup
+
+      mockRunChatStream.mockImplementation(async (opts) => {
+        opts.onModelUsed('test-model');
+        opts.onThought('thinking...');
+        opts.onContent('Hello there!');
+        return { model: 'test-model' };
+      });
+
+      const res = await request(app)
+        .post('/api/bridge/chat-stream')
+        .set('Authorization', 'Bearer client-secret-2')
+        .send({ message: 'hi' });
+
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('event: model_used');
+      expect(res.text).toContain('event: thought');
+      expect(res.text).toContain('event: content');
+      expect(res.text).toContain('Hello there!');
+      expect(res.text).toContain('event: done');
+      expect(mockRunChatStream).toHaveBeenCalledWith(expect.objectContaining({
+        origin: 'patti_client',
+        message: 'hi'
+      }));
+    });
+
+    test('emits an interrupted event when the host preempts the request', async () => {
+      mockDb.get.mockResolvedValueOnce(undefined);
+      mockDb.get.mockResolvedValueOnce({ id: 4, user_id: 1, node_name: 'Pi', bridge_secret: 'client-secret-3', node_role: 'patti_client' });
+      mockDb.get.mockResolvedValueOnce({ provider: 'local', model_name: 'test-model' });
+
+      const err = new Error('Host interrupted your request. Please try again later.');
+      err.code = 'HOST_PREEMPTED';
+      mockRunChatStream.mockRejectedValueOnce(err);
+
+      const res = await request(app)
+        .post('/api/bridge/chat-stream')
+        .set('Authorization', 'Bearer client-secret-3')
+        .send({ message: 'hi' });
+
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('event: interrupted');
+      expect(res.text).toContain('Host interrupted your request');
+    });
+
+    test('emits an error event on an unexpected failure', async () => {
+      mockDb.get.mockResolvedValueOnce(undefined);
+      mockDb.get.mockResolvedValueOnce({ id: 4, user_id: 1, node_name: 'Pi', bridge_secret: 'client-secret-4', node_role: 'patti_client' });
+      mockDb.get.mockResolvedValueOnce({ provider: 'local', model_name: 'test-model' });
+
+      mockRunChatStream.mockRejectedValueOnce(new Error('LLM API error: 500'));
+
+      const res = await request(app)
+        .post('/api/bridge/chat-stream')
+        .set('Authorization', 'Bearer client-secret-4')
+        .send({ message: 'hi' });
+
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('event: error');
+      expect(res.text).toContain('LLM API error');
+    });
+  });
+
+  describe('POST /approve-command', () => {
+    test('403 when the caller is not a registered PATTI client', async () => {
+      mockDb.get.mockResolvedValueOnce(undefined);
+      mockDb.get.mockResolvedValueOnce({ id: 4, user_id: 1, node_name: 'Sensor', bridge_secret: 'node-secret-2', node_role: 'node' });
+
+      const res = await request(app)
+        .post('/api/bridge/approve-command')
+        .set('Authorization', 'Bearer node-secret-2')
+        .send({ commandId: 'abc', approved: true });
+
+      expect(res.status).toBe(403);
+    });
+
+    test('resolves a pending command', async () => {
+      mockDb.get.mockResolvedValueOnce(undefined);
+      mockDb.get.mockResolvedValueOnce({ id: 4, user_id: 1, node_name: 'Pi', bridge_secret: 'approve-secret', node_role: 'patti_client' });
+      mockResolveCommand.mockReturnValueOnce(true);
+
+      const res = await request(app)
+        .post('/api/bridge/approve-command')
+        .set('Authorization', 'Bearer approve-secret')
+        .send({ commandId: 'abc', approved: true });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(mockResolveCommand).toHaveBeenCalledWith('abc', true, undefined, undefined);
+    });
+
+    test('404 when the command is not found or already resolved', async () => {
+      mockDb.get.mockResolvedValueOnce(undefined);
+      mockDb.get.mockResolvedValueOnce({ id: 4, user_id: 1, node_name: 'Pi', bridge_secret: 'approve-secret-2', node_role: 'patti_client' });
+      mockResolveCommand.mockReturnValueOnce(false);
+
+      const res = await request(app)
+        .post('/api/bridge/approve-command')
+        .set('Authorization', 'Bearer approve-secret-2')
+        .send({ commandId: 'missing', approved: false });
+
+      expect(res.status).toBe(404);
     });
   });
 });

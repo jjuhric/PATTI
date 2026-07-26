@@ -92,8 +92,12 @@ CREATE TABLE IF NOT EXISTS network_nodes (
   ssh_username TEXT,
   ssh_password TEXT,
   ssh_key TEXT,
+  node_role TEXT DEFAULT 'node', -- 'node' (lightweight sensor/actuator device) or 'patti_client' (full PATTI instance sharing the host's LLM)
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+-- Only one network_nodes row may ever be the PATTI client (host is not stored in this table).
+-- The unique index is created in db.js, after the node_role migration runs, so it works for
+-- both fresh installs and existing databases upgrading in place.
 
 
 CREATE TABLE IF NOT EXISTS memories (

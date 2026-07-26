@@ -17,6 +17,22 @@ class AiQueue {
       return taskFn(() => {});
     }
 
+    // Arbitration: the host always wins. A PATTI client's request never queues behind or
+    // alongside host activity - it's rejected outright so the client can show a clear
+    // "host is busy" message instead of waiting silently. A host request always jumps to
+    // the front of the line, aborting an in-flight client task if one is running.
+    const origin = metadata.origin === 'patti_client' ? 'patti_client' : 'host';
+
+    if (origin === 'patti_client') {
+      const hostActive = this.isProcessing && this.activeTask?.metadata?.origin === 'host';
+      const hostQueued = this.queue.some(t => t.metadata.origin === 'host');
+      if (hostActive || hostQueued) {
+        const err = new Error('Host is currently busy. Please try again shortly.');
+        err.code = 'HOST_BUSY';
+        return Promise.reject(err);
+      }
+    }
+
     return new Promise((resolve, reject) => {
       const taskId = ++this.taskIdCounter;
       const task = {
@@ -25,14 +41,43 @@ class AiQueue {
           nodeId: metadata.nodeId || 'unknown-node',
           name: metadata.name || 'AI Task',
           requestedAt: new Date().toISOString(),
-          ...metadata
+          ...metadata,
+          origin
         },
         taskFn,
         resolve,
         reject
       };
 
-      this.queue.push(task);
+      if (origin === 'host') {
+        // Reject any client tasks still waiting (never run them after a host request shows
+        // up), and abort a client task that's actively generating right now.
+        const remaining = [];
+        for (const queuedTask of this.queue) {
+          if (queuedTask.metadata.origin === 'patti_client') {
+            const err = new Error('Host interrupted your request. Please try again later.');
+            err.code = 'HOST_PREEMPTED';
+            queuedTask.reject(err);
+          } else {
+            remaining.push(queuedTask);
+          }
+        }
+        this.queue = remaining;
+        this.queue.unshift(task);
+
+        if (this.isProcessing && this.activeTask?.metadata?.origin === 'patti_client') {
+          const abortController = this.activeTask.metadata.abortController;
+          if (abortController) {
+            try { abortController.abort(); } catch (e) { /* already aborted/settled */ }
+          }
+          const err = new Error('Host interrupted your request. Please try again later.');
+          err.code = 'HOST_PREEMPTED';
+          this.activeTask.reject(err);
+        }
+      } else {
+        this.queue.push(task);
+      }
+
       this.broadcastState();
 
       // Process next in queue
@@ -43,6 +88,7 @@ class AiQueue {
   getState() {
     return {
       isBusy: this.isProcessing,
+      busyBy: this.activeTask ? (this.activeTask.metadata.origin || 'host') : null,
       activeTask: this.activeTask ? {
         id: this.activeTask.id,
         metadata: this.activeTask.metadata,
@@ -61,6 +107,7 @@ class AiQueue {
     broadcastAlert({
       type: 'ai_state',
       isBusy: state.isBusy,
+      busyBy: state.busyBy,
       activeTask: state.activeTask,
       queueLength: state.queueLength,
       waitingQueue: state.waitingQueue,

@@ -261,11 +261,17 @@ describe('Agents Coverage Extender Tests', () => {
         return { ok: true, json: async () => ({ success: true }) };
       }
       const decision = decisions[idx++];
+      // Once the supervisor's decision list is exhausted, this is the final responder
+      // call - it must return real, non-empty content or callLocalLLMStream now treats
+      // it as a failed generation.
+      const content = decision !== undefined
+        ? JSON.stringify(decision)
+        : 'All done.';
       return {
         ok: true,
         headers: { get: () => 'application/json' },
         json: async () => ({
-          choices: [{ message: { content: JSON.stringify(decision) } }]
+          choices: [{ message: { content } }]
         })
       };
     });

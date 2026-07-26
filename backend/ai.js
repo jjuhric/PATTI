@@ -14,7 +14,7 @@ function defaultOnlineBaseUrl(onlineProvider) {
 }
 
 // Helper to call Local LLM (supporting openai, lm-studio, and anthropic API styles)
-async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider) {
+async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft = 1) {
   const localStyle = apiStyle || 'openai';
   let endpoint = '';
   let headers = {
@@ -94,7 +94,7 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
       frequency_penalty: 0.3,
       presence_penalty: 0.1,
       stream: true,
-      ...(localStyle === 'lm-studio' ? { num_ctx: 32768 } : {})
+      ...(localStyle === 'lm-studio' ? { num_ctx: 24576 } : {})
     };
   }
 
@@ -115,6 +115,10 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
     });
   } catch (fetchErr) {
     clearTimeout(timeoutId);
+    if (retriesLeft > 0 && !abortSignal?.aborted) {
+      logger.warn(`Local LLM fetch exception, retrying (${retriesLeft} attempt(s) left): ${fetchErr.message}`);
+      return callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft - 1);
+    }
     logger.error('Local LLM fetch exception in callLocalLLMStream:', fetchErr);
     throw new Error("Local LLM Connection Lost. The model may have run out of memory. Please lower context length.");
   }
@@ -123,6 +127,10 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
   if (!response.ok) {
     const errText = await response.text();
     logger.error(`Local LLM response not ok: ${response.status} - ${errText}`);
+    if (retriesLeft > 0 && !abortSignal?.aborted) {
+      logger.warn(`Local LLM returned an error response, retrying (${retriesLeft} attempt(s) left): ${response.status} - ${errText}`);
+      return callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft - 1);
+    }
     throw new Error(`LLM API error: ${response.status} - ${errText}`);
   }
 
@@ -145,10 +153,17 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
       data = await response.json();
     }
     const content = data.choices?.[0]?.message?.content || data.content?.[0]?.text || data.response || data.content;
-    if (content) {
-      onChunk(content);
-      fullResponseText += content;
+
+    if (!content || !content.trim()) {
+      if (retriesLeft > 0 && !abortSignal?.aborted) {
+        logger.warn(`Local LLM returned an empty response, retrying (${retriesLeft} attempt(s) left).`);
+        return callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft - 1);
+      }
+      throw new Error("Local LLM returned an empty response after retrying. The model or GPU backend may have failed mid-generation (possible GPU/driver instability) - please check LM Studio.");
     }
+
+    onChunk(content);
+    fullResponseText += content;
 
     // Save token usage
     let tokenCount = 0;
@@ -210,7 +225,19 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
     }
   } catch (streamErr) {
     console.error('LM Studio stream interrupted:', streamErr);
+    if (!fullResponseText.trim() && retriesLeft > 0 && !abortSignal?.aborted) {
+      logger.warn(`Local LLM stream interrupted before any content was received, retrying (${retriesLeft} attempt(s) left): ${streamErr.message}`);
+      return callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft - 1);
+    }
     throw new Error("Local LLM Connection Lost. The model may have run out of memory. Please lower context length.");
+  }
+
+  if (!fullResponseText.trim()) {
+    if (retriesLeft > 0 && !abortSignal?.aborted) {
+      logger.warn(`Local LLM stream completed with no content, retrying (${retriesLeft} attempt(s) left).`);
+      return callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft - 1);
+    }
+    throw new Error("Local LLM returned an empty response after retrying. The model or GPU backend may have failed mid-generation (possible GPU/driver instability) - please check LM Studio.");
   }
 
   // Estimate and log streaming tokens
@@ -1525,10 +1552,11 @@ Make sure to answer the user query directly and clearly.`;
 - CRITICAL: You are NOT operating in MODE 1. Do NOT translate the request, do NOT output a JSON translation, and do NOT ask for clarification or missing information. Your ONLY task is to format the gathered results below.
 - If you output a thinking process, planning, or reasoning before your response, you MUST wrap it inside <think> and </think> tags. For example: <think>your thoughts here</think>your final response here.
 - Present a warm, bubbly, and welcoming final response containing ALL details of the gathered report results below.
+- CRITICAL: The gathered report/action results below (if any) are ALL the information you have - there is no further data coming. Never describe an action as "in progress", "being processed", "underway", or "will be provided shortly". If no results are present below and the request needed data you don't have, say so plainly instead of fabricating a status update.
 - Here is the user request: "${userMessage}".
 - Project Idea that was executed: "${projectIdea}"
 ${currentTimeContext ? `\n### Current System Time Context:\n${currentTimeContext}\n` : ''}
-${accumulatedToolOutputs.length > 0 ? `Here are the gathered report/action results:\n${accumulatedToolOutputs.map(t => `--- [Source: ${t.tool}] ---\n${t.output}`).join('\n\n')}` : ''}`;
+${accumulatedToolOutputs.length > 0 ? `Here are the gathered report/action results:\n${accumulatedToolOutputs.map(t => `--- [Source: ${t.tool}] ---\n${t.output}`).join('\n\n')}` : 'No tool/agent results were gathered for this request.'}`;
   }
 
   const isGemini = provider === 'gemini' || (provider === 'online' && onlineProvider === 'gemini');

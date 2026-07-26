@@ -39,7 +39,8 @@ export default function ChatPane({
   handleStop,
   messagesEndRef,
   handleResolveCommand,
-  streamStatus
+  streamStatus,
+  llmBusy
 }) {
   const [editedCommands, setEditedCommands] = useState({});
   const [pendingAttachments, setPendingAttachments] = useState([]);
@@ -577,11 +578,16 @@ export default function ChatPane({
           <textarea
             ref={textareaRef}
             rows={1}
-            placeholder={activeChatId ? (isStreaming ? "AI is thinking..." : "Send a message...") : "Select or create a chat to begin"}
+            placeholder={
+              !activeChatId ? "Select or create a chat to begin"
+                : isStreaming ? "AI is thinking..."
+                : llmBusy ? "Host is busy - please wait..."
+                : "Send a message..."
+            }
             value={inputText}
             onChange={e => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={!activeChatId || isStreaming}
+            disabled={!activeChatId || isStreaming || llmBusy}
           />
         </div>
         {isStreaming ? (
@@ -589,7 +595,7 @@ export default function ChatPane({
             <Square size={18} fill="currentColor" />
           </button>
         ) : (
-          <button type="submit" className="btn-send" disabled={!activeChatId || !inputText.trim()}>
+          <button type="submit" className="btn-send" disabled={!activeChatId || !inputText.trim() || llmBusy} title={llmBusy ? "Host is busy - please wait" : undefined}>
             <Send size={18} />
           </button>
         )}

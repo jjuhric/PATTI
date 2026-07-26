@@ -31,6 +31,11 @@ jest.mock('../tools/esp32_tool', () => ({
   handleEsp32Tool: jest.fn()
 }));
 
+jest.mock('bcryptjs', () => ({
+  compare: jest.fn()
+}));
+const bcrypt = require('bcryptjs');
+
 const app = express();
 app.use(express.json());
 app.use('/api/nodes', nodesRouter);
@@ -244,6 +249,81 @@ describe('Nodes API', () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('unexpected failure');
+    });
+  });
+
+  describe('POST /api/nodes/register-client', () => {
+    const validBody = {
+      hostAdminUsername: 'admin',
+      hostAdminPassword: 'correct-password',
+      nodeName: 'Living Room Pi',
+      deviceType: 'rpi-5-8gb',
+      ipAddress: '192.168.1.50',
+      port: 3000
+    };
+
+    test('returns 400 when required fields are missing', async () => {
+      const res = await request(app).post('/api/nodes/register-client').send({ hostAdminUsername: 'admin' });
+      expect(res.status).toBe(400);
+    });
+
+    test('returns 401 when the username does not exist', async () => {
+      mockDb.get.mockResolvedValueOnce(null); // users lookup
+      const res = await request(app).post('/api/nodes/register-client').send(validBody);
+      expect(res.status).toBe(401);
+      expect(res.body.error).toContain('Invalid host admin username or password');
+    });
+
+    test('returns 401 when the password does not match', async () => {
+      mockDb.get.mockResolvedValueOnce({ id: 1, username: 'admin', password_hash: 'hashed' }); // users lookup
+      bcrypt.compare.mockResolvedValueOnce(false);
+      const res = await request(app).post('/api/nodes/register-client').send(validBody);
+      expect(res.status).toBe(401);
+    });
+
+    test('returns 409 when a PATTI client is already registered and force is not set', async () => {
+      mockDb.get.mockResolvedValueOnce({ id: 1, username: 'admin', password_hash: 'hashed' }); // users lookup
+      bcrypt.compare.mockResolvedValueOnce(true);
+      mockDb.get.mockResolvedValueOnce({ id: 5, node_name: 'Old Pi', ip_address: '192.168.1.40' }); // existing client lookup
+      const res = await request(app).post('/api/nodes/register-client').send(validBody);
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain('already registered');
+      expect(res.body.existingClient.node_name).toBe('Old Pi');
+      expect(mockDb.run).not.toHaveBeenCalled();
+    });
+
+    test('replaces the existing client and succeeds when force=true', async () => {
+      mockDb.get.mockResolvedValueOnce({ id: 1, username: 'admin', password_hash: 'hashed' }); // users lookup
+      bcrypt.compare.mockResolvedValueOnce(true);
+      mockDb.get.mockResolvedValueOnce({ id: 5, node_name: 'Old Pi', ip_address: '192.168.1.40' }); // existing client lookup
+      mockDb.run.mockResolvedValueOnce({}); // delete old client
+      mockDb.run.mockResolvedValueOnce({ lastID: 9 }); // insert new client
+
+      const res = await request(app).post('/api/nodes/register-client').send({ ...validBody, force: true });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.nodeId).toBe(9);
+      expect(typeof res.body.bridgeSecret).toBe('string');
+      expect(res.body.bridgeSecret.length).toBeGreaterThan(20);
+      expect(mockDb.run).toHaveBeenCalledWith('DELETE FROM network_nodes WHERE id = ?', [5]);
+    });
+
+    test('registers successfully when no PATTI client exists yet', async () => {
+      mockDb.get.mockResolvedValueOnce({ id: 1, username: 'admin', password_hash: 'hashed' }); // users lookup
+      bcrypt.compare.mockResolvedValueOnce(true);
+      mockDb.get.mockResolvedValueOnce(null); // no existing client
+      mockDb.run.mockResolvedValueOnce({ lastID: 11 });
+
+      const res = await request(app).post('/api/nodes/register-client').send(validBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.nodeId).toBe(11);
+      expect(res.body.hostVersion).toBeTruthy();
+      const insertCall = mockDb.run.mock.calls[0];
+      expect(insertCall[0]).toContain("node_role");
+      expect(insertCall[0]).toContain("'patti_client'");
     });
   });
 });
