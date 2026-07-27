@@ -864,6 +864,21 @@ If no changes are required and you can proceed without executing the code, then 
       }
 
       if (commTurn && commTurn.params) {
+        if (commTurn.params.requested_action === 'general_knowledge_answer' && commTurn.params.answer) {
+          // The Communication Specialist judged this stable, pre-2024 general knowledge it
+          // already knows with confidence - skip the Supervisor -> worker-agent pipeline
+          // entirely (and the web search it would likely have triggered) and answer directly.
+          onThought('[System] General knowledge guardrail: answering directly, skipping Supervisor delegation.\n');
+          const answer = commTurn.params.answer;
+          onContent(answer);
+          if (db && typeof db.run === 'function' && chatId) {
+            await db.run(
+              'INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)',
+              [chatId, 'assistant', answer]
+            ).catch(err => console.error('Failed to save general knowledge answer to database:', err));
+          }
+          return;
+        }
         if (commTurn.params.requested_action === 'clarification_needed') {
           // Deterministic guard: read-only info lookups (sports, weather, news)
           // never need HITL approval, but the local model sometimes asks anyway
