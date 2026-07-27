@@ -1,11 +1,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { decrypt } = require('./crypto');
 const { llmFetchSignal } = require('./fetchTimeout');
-
-// Anthropic doesn't share OpenAI's base URL, so give it its own default.
-function defaultOnlineBaseUrl(onlineProvider) {
-  return onlineProvider === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1';
-}
+const { defaultOnlineBaseUrl, resolveTarget, resolveEndpoint, buildHeaders, buildBody, extractResponseText } = require('../llm/provider_config');
 
 // Build the LLM-calling settings object for a specific userId with no active HTTP request
 // in scope - same approach backend/services/research_daemon.js uses for its own background
@@ -79,51 +75,21 @@ async function generateTextRaw(settings, systemPrompt, userPrompt) {
       ).catch(() => {});
     }
   } else {
-    const targetUrl = provider === 'local'
-      ? (localBaseUrl || process.env.LOCAL_LLM_URL || 'http://localhost:1234/v1')
-      : (onlineUrl || defaultOnlineBaseUrl(onlineProvider));
-    const targetKey = provider === 'local' ? localApiKey : onlineKey;
-    const targetStyle = provider === 'local' ? (localApiStyle || 'openai') : (onlineProvider || 'openai');
-
-    let endpoint = '';
-    const headers = { 'Content-Type': 'application/json' };
-    if (targetKey && targetKey !== 'lm-studio') {
-      if (targetStyle === 'anthropic') {
-        headers['x-api-key'] = targetKey;
-        headers['anthropic-version'] = '2023-06-01';
-      } else {
-        headers['Authorization'] = `Bearer ${targetKey}`;
-      }
-    }
-
-    try {
-      const urlObj = new URL(targetUrl);
-      const origin = urlObj.origin;
-      if (targetStyle === 'lm-studio') endpoint = `${origin}/v1/chat/completions`;
-      else if (targetStyle === 'anthropic') endpoint = `${origin}/v1/messages`;
-      else if (targetStyle === 'local-gemini') endpoint = `${origin}/api/v1/chat`;
-      else endpoint = `${targetUrl.replace(/\/$/, '')}/chat/completions`;
-    } catch (e) {
-      endpoint = targetStyle === 'local-gemini'
-        ? `${targetUrl.replace(/\/$/, '')}/api/v1/chat`
-        : `${targetUrl.replace(/\/$/, '')}/chat/completions`;
-    }
-
-    const finalModel = (modelName === 'qwen2.5-coder-7b-instruct') ? (process.env.OPENAI_API_MODEL || 'qwen2.5-coder-7b-instruct') : modelName;
-    let body = {};
-    if (targetStyle === 'anthropic') {
-      body = { model: finalModel, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }], max_tokens: 4096 };
-    } else if (targetStyle === 'local-gemini') {
-      body = { model: finalModel, system_prompt: systemPrompt, input: userPrompt };
-    } else {
-      body = {
-        model: finalModel,
-        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-        temperature: 0.4,
-        ...(provider === 'local' ? {} : { max_tokens: 4096 }),
-        ...(targetStyle === 'lm-studio' ? { num_ctx: 24576 } : {})
-      };
-    }
+    const { targetUrl, targetKey, targetStyle } = resolveTarget(settings);
+    const headers = buildHeaders(targetKey, targetStyle);
+    const endpoint = resolveEndpoint(targetUrl, targetStyle);
+    // Anthropic previously hardcoded max_tokens: 4096 even for a local provider (every other
+    // call site here skips max_tokens for local); preserve that as this call's one deliberate
+    // quirk rather than silently aligning it with the others.
+    const body = buildBody({
+      targetStyle,
+      provider: targetStyle === 'anthropic' ? 'online' : provider,
+      modelName,
+      systemText: systemPrompt,
+      userText: userPrompt,
+      temperature: 0.4,
+      maxTokensOnline: 4096
+    });
 
     const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: llmFetchSignal() });
     if (!res.ok) {
@@ -131,9 +97,7 @@ async function generateTextRaw(settings, systemPrompt, userPrompt) {
       throw new Error(`LLM error: ${res.status} - ${errText}`);
     }
     const data = await res.json();
-    respText = targetStyle === 'anthropic'
-      ? (data.content?.[0]?.text || '')
-      : (data.choices?.[0]?.message?.content || data.response || data.content || '');
+    respText = extractResponseText(data, targetStyle);
 
     const tokenCount = data.usage?.total_tokens
       || (data.usage?.input_tokens && data.usage?.output_tokens ? data.usage.input_tokens + data.usage.output_tokens : null)

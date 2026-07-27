@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('./logger');
 const { llmFetchSignal } = require('./fetchTimeout');
+const { resolveTarget, resolveEndpoint, buildHeaders, buildBody, extractResponseText } = require('../llm/provider_config');
 
 const AGENT_PROMPTS = new Proxy({}, {
   get(target, prop) {
@@ -48,11 +49,6 @@ const AGENT_PROMPTS = new Proxy({}, {
     };
   }
 });
-
-// Anthropic doesn't share OpenAI's base URL, so give it its own default.
-function defaultOnlineBaseUrl(onlineProvider) {
-  return onlineProvider === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1';
-}
 
 // Reusable function to execute a single LLM decision turn
 async function runAgentTurn(agentName, systemPrompt, settings, userMessage, history, retriesLeft = 1) {
@@ -114,87 +110,20 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
       ).catch(err => console.error('Failed to log Gemini agent turn tokens:', err));
     }
   } else {
-    let targetUrl = provider === 'local' 
-      ? (localBaseUrl || process.env.LOCAL_LLM_URL || 'http://localhost:1234/v1') 
-      : (onlineUrl || defaultOnlineBaseUrl(onlineProvider));
-    let targetKey = provider === 'local' ? localApiKey : onlineKey;
-    let targetStyle = provider === 'local' ? (localApiStyle || 'openai') : (onlineProvider || 'openai');
-
-    let endpoint = '';
-    let headers = { 'Content-Type': 'application/json' };
-    if (targetKey && targetKey !== 'lm-studio') {
-      if (targetStyle === 'anthropic') {
-        headers['x-api-key'] = targetKey;
-        headers['anthropic-version'] = '2023-06-01';
-      } else {
-        headers['Authorization'] = `Bearer ${targetKey}`;
-      }
-    }
-
-    try {
-      const urlObj = new URL(targetUrl);
-      const origin = urlObj.origin;
-      if (targetStyle === 'lm-studio') {
-        endpoint = `${origin}/v1/chat/completions`;
-      } else if (targetStyle === 'anthropic') {
-        endpoint = `${origin}/v1/messages`;
-      } else if (targetStyle === 'local-gemini') {
-        endpoint = `${origin}/api/v1/chat`;
-      } else {
-        endpoint = `${targetUrl.replace(/\/$/, '')}/chat/completions`;
-      }
-    } catch (e) {
-      if (targetStyle === 'local-gemini') {
-        endpoint = `${targetUrl.replace(/\/$/, '')}/api/v1/chat`;
-      } else {
-        endpoint = `${targetUrl.replace(/\/$/, '')}/chat/completions`;
-      }
-    }
-
-    const finalModel = (modelName === 'qwen2.5-coder-7b-instruct') ? (process.env.OPENAI_API_MODEL || 'qwen2.5-coder-7b-instruct') : modelName;
-    let body = {};
-    if (targetStyle === 'anthropic') {
-      body = {
-        model: finalModel,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: instructions }],
-        ...(provider === 'local' ? {} : { max_tokens: 1024 })
-      };
-    } else if (targetStyle === 'local-gemini') {
-      body = {
-        model: finalModel,
-        system_prompt: systemPrompt,
-        input: instructions
-      };
-    } else {
-      let userContent = instructions;
-      if (settings.images && Array.isArray(settings.images) && settings.images.length > 0) {
-        userContent = [
-          { type: 'text', text: instructions }
-        ];
-        for (const base64Img of settings.images) {
-          const cleanBase64 = base64Img.replace(/^data:image\/\w+;base64,/, '');
-          userContent.push({
-            type: 'image_url',
-            image_url: {
-              url: `data:image/jpeg;base64,${cleanBase64}`
-            }
-          });
-        }
-      }
-
-      body = {
-        model: finalModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userContent }
-        ],
-        temperature: 0.1,
-        response_format: { type: "json_object" },
-        ...(provider === 'local' ? {} : { max_tokens: targetStyle === 'lm-studio' ? 1024 : 2048 }),
-        ...(targetStyle === 'lm-studio' ? { num_ctx: 24576 } : {})
-      };
-    }
+    const { targetUrl, targetKey, targetStyle } = resolveTarget(settings);
+    const headers = buildHeaders(targetKey, targetStyle);
+    const endpoint = resolveEndpoint(targetUrl, targetStyle);
+    const body = buildBody({
+      targetStyle,
+      provider,
+      modelName,
+      systemText: systemPrompt,
+      userText: instructions,
+      images: settings.images,
+      temperature: 0.1,
+      jsonMode: true,
+      maxTokensOnline: targetStyle === 'openai' ? 2048 : 1024
+    });
 
     let res;
     try {
@@ -233,9 +162,7 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
     }
 
     const data = await res.json();
-    respText = targetStyle === 'anthropic' 
-      ? (data.content?.[0]?.text || '') 
-      : (data.choices?.[0]?.message?.content || data.response || data.content || '');
+    respText = extractResponseText(data, targetStyle);
 
     // Log token usage
     let tokenCount = 0;
@@ -349,75 +276,27 @@ CRITICAL: The tool outputs above are ALL the information you have - there is no 
       ).catch(err => console.error('Failed to log Gemini response tokens:', err));
     }
   } else {
-    let targetUrl = provider === 'local' 
-      ? (localBaseUrl || process.env.LOCAL_LLM_URL || 'http://localhost:1234/v1') 
-      : (onlineUrl || defaultOnlineBaseUrl(onlineProvider));
-    let targetKey = provider === 'local' ? localApiKey : onlineKey;
-    let targetStyle = provider === 'local' ? (localApiStyle || 'openai') : (onlineProvider || 'openai');
-
-    let endpoint = '';
-    let headers = { 'Content-Type': 'application/json' };
-    if (targetKey && targetKey !== 'lm-studio') {
-      if (targetStyle === 'anthropic') {
-        headers['x-api-key'] = targetKey;
-        headers['anthropic-version'] = '2023-06-01';
-      } else {
-        headers['Authorization'] = `Bearer ${targetKey}`;
-      }
-    }
-
-    try {
-      const urlObj = new URL(targetUrl);
-      const origin = urlObj.origin;
-      if (targetStyle === 'lm-studio') {
-        endpoint = `${origin}/v1/chat/completions`;
-      } else if (targetStyle === 'anthropic') {
-        endpoint = `${origin}/v1/messages`;
-      } else {
-        endpoint = `${targetUrl.replace(/\/$/, '')}/chat/completions`;
-      }
-    } catch (e) {
-      endpoint = `${targetUrl.replace(/\/$/, '')}/chat/completions`;
-    }
-
-    const finalModel = (modelName === 'qwen2.5-coder-7b-instruct') ? (process.env.OPENAI_API_MODEL || 'qwen2.5-coder-7b-instruct') : modelName;
-    let body = {};
-    if (targetStyle === 'anthropic') {
-      body = {
-        model: finalModel,
-        system: responderInstruction,
-        messages: [{ role: 'user', content: 'Generate report.' }],
-        ...(provider === 'local' ? {} : { max_tokens: 1024 })
-      };
-    } else {
-      let userContent = responderInstruction;
-      if (settings.images && Array.isArray(settings.images) && settings.images.length > 0) {
-        userContent = [
-          { type: 'text', text: responderInstruction }
-        ];
-        for (const base64Img of settings.images) {
-          const cleanBase64 = base64Img.replace(/^data:image\/\w+;base64,/, '');
-          userContent.push({
-            type: 'image_url',
-            image_url: {
-              url: `data:image/jpeg;base64,${cleanBase64}`
-            }
-          });
-        }
-      }
-
-      body = {
-        model: finalModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userContent }
-        ],
-        temperature: 0.2,
-        response_format: { type: "json_object" },
-        ...(provider === 'local' ? {} : { max_tokens: targetStyle === 'lm-studio' ? 1024 : 2048 }),
-        ...(targetStyle === 'lm-studio' ? { num_ctx: 24576 } : {})
-      };
-    }
+    const { targetUrl, targetKey, targetStyle } = resolveTarget(settings);
+    const headers = buildHeaders(targetKey, targetStyle);
+    // resolveEndpoint/buildBody now give this call the same local-gemini support the other
+    // provider-calling functions already had - this function was previously missing it
+    // entirely and would have sent an openai-shaped request to a local-gemini server.
+    const endpoint = resolveEndpoint(targetUrl, targetStyle);
+    // Anthropic keeps its existing shape (the full instruction as "system", a fixed short
+    // user turn) rather than the systemPrompt/responderInstruction split every other style
+    // uses, since that's how this call was already built for Anthropic specifically.
+    const isAnthropic = targetStyle === 'anthropic';
+    const body = buildBody({
+      targetStyle,
+      provider,
+      modelName,
+      systemText: isAnthropic ? responderInstruction : systemPrompt,
+      userText: isAnthropic ? 'Generate report.' : responderInstruction,
+      images: settings.images,
+      temperature: 0.2,
+      jsonMode: true,
+      maxTokensOnline: targetStyle === 'openai' ? 2048 : 1024
+    });
 
     let res;
     try {
@@ -455,7 +334,7 @@ CRITICAL: The tool outputs above are ALL the information you have - there is no 
     }
 
     const data = await res.json();
-    rawRespText = targetStyle === 'anthropic' ? (data.content?.[0]?.text || '') : (data.choices?.[0]?.message?.content || '');
+    rawRespText = extractResponseText(data, targetStyle);
 
     // Log token usage
     let tokenCount = 0;
@@ -873,59 +752,20 @@ async function runSupervisorTurn(systemPrompt, settings, userMessage) {
       ).catch(err => console.error('Failed to log Gemini supervisor tokens:', err));
     }
   } else {
-    let targetUrl = provider === 'local' 
-      ? (localBaseUrl || process.env.LOCAL_LLM_URL || 'http://localhost:1234/v1') 
-      : (onlineUrl || defaultOnlineBaseUrl(onlineProvider));
-    let targetKey = provider === 'local' ? localApiKey : onlineKey;
-    let targetStyle = provider === 'local' ? (localApiStyle || 'openai') : (onlineProvider || 'openai');
-
-    let endpoint = '';
-    let headers = { 'Content-Type': 'application/json' };
-    if (targetKey && targetKey !== 'lm-studio') {
-      if (targetStyle === 'anthropic') {
-        headers['x-api-key'] = targetKey;
-        headers['anthropic-version'] = '2023-06-01';
-      } else {
-        headers['Authorization'] = `Bearer ${targetKey}`;
-      }
-    }
-
-    try {
-      const urlObj = new URL(targetUrl);
-      const origin = urlObj.origin;
-      if (targetStyle === 'lm-studio') {
-        endpoint = `${origin}/v1/chat/completions`;
-      } else if (targetStyle === 'anthropic') {
-        endpoint = `${origin}/v1/messages`;
-      } else {
-        endpoint = `${targetUrl.replace(/\/$/, '')}/chat/completions`;
-      }
-    } catch (e) {
-      endpoint = `${targetUrl.replace(/\/$/, '')}/chat/completions`;
-    }
-
-    const finalModel = (modelName === 'qwen2.5-coder-7b-instruct') ? (process.env.OPENAI_API_MODEL || 'qwen2.5-coder-7b-instruct') : modelName;
-    let body = {};
-    if (targetStyle === 'anthropic') {
-      body = {
-        model: finalModel,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: `Parse this user request and return the JSON handoff output: ${userMessage}` }],
-        ...(provider === 'local' ? {} : { max_tokens: 1024 })
-      };
-    } else {
-      body = {
-        model: finalModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        temperature: 0.1,
-        response_format: { type: "json_object" },
-        ...(provider === 'local' ? {} : { max_tokens: 1024 }),
-        ...(targetStyle === 'lm-studio' ? { num_ctx: 24576 } : {})
-      };
-    }
+    const { targetUrl, targetKey, targetStyle } = resolveTarget(settings);
+    const headers = buildHeaders(targetKey, targetStyle);
+    const endpoint = resolveEndpoint(targetUrl, targetStyle);
+    const isAnthropic = targetStyle === 'anthropic';
+    const body = buildBody({
+      targetStyle,
+      provider,
+      modelName,
+      systemText: systemPrompt,
+      userText: isAnthropic ? `Parse this user request and return the JSON handoff output: ${userMessage}` : userMessage,
+      temperature: 0.1,
+      jsonMode: true,
+      maxTokensOnline: 1024
+    });
 
     let res = await fetch(endpoint, {
       method: 'POST',
@@ -940,9 +780,7 @@ async function runSupervisorTurn(systemPrompt, settings, userMessage) {
     }
 
     const data = await res.json();
-    respText = targetStyle === 'anthropic' 
-      ? (data.content?.[0]?.text || '') 
-      : (data.choices?.[0]?.message?.content || data.response || data.content || '');
+    respText = extractResponseText(data, targetStyle);
 
     // Log token usage
     let tokenCount = 0;
