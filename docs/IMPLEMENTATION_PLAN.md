@@ -234,7 +234,36 @@ Options, best first:
 
 Option 1 is more work but is the only way to get this genuinely right.
 
-### 3c. Favorite services
+### 3c. Make the agent dashboard self-updating
+
+**This is a recurring bug, not a one-off.** The agent roster shown in the monitor dashboard is a
+hardcoded `agents` array in `monitor_dashboard/src/App.jsx`, and "is this agent active?" is a
+hand-written chain of string comparisons in `getAgentStatus` — in *two* places (one matching
+SSE thought text, one matching the reported agent/tool name).
+
+Adding a backend agent therefore requires three separate frontend edits that nothing enforces.
+When they are missed the agent silently never appears and never lights up. This had already
+drifted badly: six agents were missing (`movie_tv`, `deep_research`, `deep_research_pro`,
+`course_builder`, `document_generator`, `document_formatter`) before being added by hand.
+
+The fix is a single source of truth:
+
+1. Add a backend endpoint (for example `GET /api/agents`) that enumerates agent prompt files
+   from `backend/utils/agents/`, returning each agent's canonical name, display name,
+   description, and the tool names it dispatches to. `AGENT_PROMPTS`'s `ownKeys` trap in
+   `backend/utils/agents.js` already reads that directory and can back this.
+2. Have the dashboard fetch that list instead of hardcoding it, keeping a small
+   name-to-icon map with a sensible default so a new agent still renders without a frontend
+   change.
+3. Replace both `getAgentStatus` comparison chains with one match against the canonical name
+   returned by the endpoint.
+
+Watch one subtlety when matching by substring: `deep_research_pro_agent` and
+`deep_research_agent` are distinct agents whose names overlap. Exact-match on canonical names
+avoids this class of bug entirely, which is another reason to prefer the registry over
+substring heuristics.
+
+### 3d. Favorite services
 
 `users.favorite_teams` already exists for sports. Add an analogous
 `users.streaming_services` column so `whats_new` filters to services the user actually pays
