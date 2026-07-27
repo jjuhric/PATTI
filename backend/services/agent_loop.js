@@ -13,8 +13,24 @@ const {
   stripSendMessagePrefix,
   isGoogleHomeDeviceRequest,
   isAgentInfoRequest,
-  isUserInfoRequest
+  isUserInfoRequest,
+  isSimpleAcknowledgment
 } = require('./interceptors');
+
+// A message that's pure gratitude/praise ("thanks!", "that was great, thank you") doesn't need
+// the Communication Specialist -> Supervisor -> Communication Specialist pipeline - that's three
+// LLM calls (three chances for a flaky local model to return an empty response) just to arrive
+// at "no tool needed, say you're welcome". This is what actually broke on "That was a great
+// response. thank you." - the Supervisor correctly decided no agent was needed, but the final
+// response call still had to round-trip the local LLM and came back empty twice. Positive-
+// feedback learning (storing what worked, for future routing) already happens independently
+// upstream in routes/chat.js's handleUserFeedback call - this only short-circuits the reply.
+const ACKNOWLEDGMENT_RESPONSES = [
+  "Aww, thank you so much! 💖 I'm always happy to help - just let me know if you need anything else! ✨",
+  "You're so welcome! 😊 That means a lot - I'm here anytime you need me! 🌸",
+  "Thank you for the kind words! ✨ Let me know whenever you need anything else! 💖",
+  "So glad that worked out for you! 🎉 I'm always here if you need more help! 😊"
+];
 
 // Run the agent loop
 // Run the agent loop (Multi-Agent Coordinator)
@@ -59,6 +75,20 @@ async function runAgentLoop({
   // preceding assistant turn regardless, or they have no way to know what's
   // being responded to and will fabricate an answer instead.
   const rawRecentHistory = firstUserIdx !== -1 ? history.slice(firstUserIdx) : [];
+
+  // --- Simple Acknowledgment Fast-Path ---
+  if (isSimpleAcknowledgment(userMessage)) {
+    const response = ACKNOWLEDGMENT_RESPONSES[Math.floor(Math.random() * ACKNOWLEDGMENT_RESPONSES.length)];
+    onThought("[Simple Acknowledgment Intercept] Pure gratitude/praise detected with no actionable content. Responding directly without the full pipeline.\n");
+    onContent(response);
+    if (db && typeof db.run === 'function' && chatId) {
+      await db.run(
+        'INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)',
+        [chatId, 'assistant', response]
+      ).catch(err => console.error('Failed to save acknowledgment response to database:', err));
+    }
+    return;
+  }
 
   // --- Direct Send Message to Device Interceptor ---
   const cleanMsgForSend = userMessage.trim().toLowerCase();

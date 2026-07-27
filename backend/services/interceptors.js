@@ -83,11 +83,40 @@ function isUserInfoRequest(msg) {
   return USER_INFO_KEYWORDS.some((kw) => cleanMsg.includes(kw));
 }
 
+const GRATITUDE_RE = /\b(thanks|thank you|thx|ty|appreciate it|appreciated)\b/i;
+const PRAISE_RE = /\b(good|perfect|great|awesome|excellent|amazing|nice|wonderful|fantastic|brilliant)\b/i;
+
+// Anything suggesting the message carries a real question or request alongside the gratitude/
+// praise, so it must NOT be short-circuited - "thanks, can you also check the weather" needs
+// the real pipeline, not a canned reply. Deliberately biased toward false negatives (missing a
+// fast-path opportunity) over false positives (silently dropping a real request).
+// "help" is deliberately NOT bare here - "thank you for your help"/"thanks for helping" are
+// gratitude, not requests, so only the imperative phrasings count as a real request signal.
+const REQUEST_SIGNAL_RE = /[?]|\b(can you|could you|would you|will you|please|now|also|next|and then|what|when|where|how|why|who|which|do you|should|need|want|help me|help with|can you help|check|find|get me|show me|tell me|give me|go ahead|can we|let's|make|set|turn|run|open|close|start|stop|restart|create|delete|remove|schedule|remind)\b/i;
+
+/**
+ * Matches a short message that is purely conversational gratitude/praise with nothing else
+ * actionable in it - "thanks!", "that was great, thank you", "perfect, awesome job". These
+ * currently pay for the full three-LLM-call pipeline (Communication Specialist translate ->
+ * Supervisor decision -> Communication Specialist final response) just to arrive at "no tool
+ * needed, say you're welcome" - three chances for a flaky local LLM call to fail on a message
+ * that needed zero of them. Capped at 20 words so a longer message isn't misread as pure
+ * acknowledgment just because it happens to contain "great" or "thanks" somewhere in it.
+ */
+function isSimpleAcknowledgment(msg) {
+  const clean = (msg || '').trim();
+  if (!clean) return false;
+  if (clean.split(/\s+/).length > 20) return false;
+  if (REQUEST_SIGNAL_RE.test(clean)) return false;
+  return GRATITUDE_RE.test(clean) || PRAISE_RE.test(clean);
+}
+
 module.exports = {
   isSendMessageCommand,
   isIpOnlyMessage,
   stripSendMessagePrefix,
   isGoogleHomeDeviceRequest,
   isAgentInfoRequest,
-  isUserInfoRequest
+  isUserInfoRequest,
+  isSimpleAcknowledgment
 };

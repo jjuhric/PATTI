@@ -4,7 +4,8 @@ const {
   stripSendMessagePrefix,
   isGoogleHomeDeviceRequest,
   isAgentInfoRequest,
-  isUserInfoRequest
+  isUserInfoRequest,
+  isSimpleAcknowledgment
 } = require('../services/interceptors');
 
 describe('isSendMessageCommand', () => {
@@ -117,5 +118,36 @@ describe('isUserInfoRequest', () => {
 
   test.each(['who are you', 'what is the weather', 'your name please'])('does not match "%s"', (msg) => {
     expect(isUserInfoRequest(msg)).toBe(false);
+  });
+});
+
+describe('isSimpleAcknowledgment', () => {
+  test.each([
+    'thanks',
+    'Thank you!',
+    'That was a great response. thank you.',
+    'perfect, thanks!',
+    'awesome job',
+    'ty',
+    "that's wonderful, appreciate it",
+    'Great, thank you so much for your help'
+  ])('matches "%s"', (msg) => {
+    expect(isSimpleAcknowledgment(msg)).toBe(true);
+  });
+
+  test.each([
+    ['thanks, can you also check the weather', 'gratitude plus a follow-up request'],
+    ['thanks, what time is it', 'gratitude plus a question'],
+    ['great, now go ahead and restart the service', 'imperative command without a question mark'],
+    ['thanks! also turn off the office lights', 'gratitude plus a device command'],
+    ['perfect, please schedule a reminder for tomorrow', 'praise plus a scheduling request'],
+    ['great, can you help me with one more thing', 'praise plus an actual request for help'],
+    ['what is the weather', 'a plain question with no gratitude/praise at all'],
+    ['', 'empty string'],
+    [null, 'null'],
+    [undefined, 'undefined'],
+    ['Great work on the quarterly report, thanks - could you also summarize the key risks and send it to the team by Friday morning', 'long message (over 20 words) even though it starts with praise/gratitude']
+  ])('does not match "%s" (%s)', (msg) => {
+    expect(isSimpleAcknowledgment(msg)).toBe(false);
   });
 });
