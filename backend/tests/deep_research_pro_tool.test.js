@@ -77,7 +77,10 @@ describe('handleDeepResearchProTool', () => {
     const [pythonExe, args, opts] = mockSpawn.mock.calls[0];
     expect(pythonExe).toContain(FAKE_SCRAPER_DIR);
     expect(args).toEqual(expect.arrayContaining(['research', 'Rust ownership', '--max-pages', '100', '--time-budget', '480']));
-    expect(opts).toEqual({ cwd: FAKE_SCRAPER_DIR });
+    expect(opts.cwd).toBe(FAKE_SCRAPER_DIR);
+    // No user_settings row exists for this test user, so the LLM env injection has nothing to
+    // override - the subprocess just inherits the parent process's own environment unchanged.
+    expect(opts.env).toMatchObject(process.env);
 
     const jobIdMatch = /job (\S+),/.exec(output);
     expect(jobIdMatch).not.toBeNull();
@@ -156,6 +159,48 @@ describe('handleDeepResearchProTool', () => {
   test('check_status with an unknown jobId returns an error', async () => {
     const output = await handleDeepResearchProTool(db, userId, 'check_status', { jobId: 'does-not-exist' });
     expect(output).toMatch(/^Error: No job found/);
+  });
+
+  test('start_research injects PATTI\'s own local model/server into the subprocess env, overriding the scraper\'s own .env', async () => {
+    const localUser = await db.run("INSERT INTO users (username, password_hash) VALUES ('localmodeluser', 'hashed')");
+    await db.run(
+      `INSERT INTO user_settings (user_id, provider, model_name, preferred_local_model, local_url, local_key)
+       VALUES (?, 'local', 'some-default', 'google/gemma-4-e4b', 'http://192.168.1.42:1234/v1', 'lm-studio')`,
+      [localUser.lastID]
+    );
+
+    await handleDeepResearchProTool(db, localUser.lastID, 'start_research', { topic: 'PwC CEDA' });
+
+    const [, , opts] = mockSpawn.mock.calls[0];
+    // This is the actual fix for the reported crash: the scraper project's own .env still
+    // defaults LLM_MODEL to a stale placeholder ("qwen2.5-coder-7b-instruct" historically) -
+    // if that ever names a different model than the one already loaded in LM Studio, LM Studio
+    // loads a second model to satisfy it, which exhausted memory alongside gemma-4-e4b and
+    // crashed the process (observed: exit code 1, empty stderr - consistent with an OS-level
+    // OOM kill, not a normal Python exception). Injecting the real values here means the
+    // subprocess always targets the exact model/server PATTI already has loaded.
+    expect(opts.env.LLM_PROVIDER).toBe('lmstudio');
+    expect(opts.env.LLM_BASE_URL).toBe('http://192.168.1.42:1234/v1');
+    expect(opts.env.LLM_MODEL).toBe('google/gemma-4-e4b');
+    // The "lm-studio" placeholder key must not be forwarded as a real API key.
+    expect(opts.env.LLM_API_KEY).toBeUndefined();
+  });
+
+  test('start_research does not override the subprocess env when PATTI is on an online provider', async () => {
+    const onlineUser = await db.run("INSERT INTO users (username, password_hash) VALUES ('onlineuser', 'hashed')");
+    await db.run(
+      "INSERT INTO user_settings (user_id, provider, online_provider) VALUES (?, 'online', 'anthropic')",
+      [onlineUser.lastID]
+    );
+
+    await handleDeepResearchProTool(db, onlineUser.lastID, 'start_research', { topic: 'Some topic' });
+
+    const [, , opts] = mockSpawn.mock.calls[0];
+    // No shared local model to collide with, so the scraper's own independent config is left
+    // exactly as it was (no LLM_PROVIDER/LLM_MODEL keys added beyond whatever the parent
+    // process's own environment already had).
+    expect(opts.env.LLM_PROVIDER).toBe(process.env.LLM_PROVIDER);
+    expect(opts.env.LLM_MODEL).toBe(process.env.LLM_MODEL);
   });
 
   test('check_status returns the most recent job when no jobId is given', async () => {

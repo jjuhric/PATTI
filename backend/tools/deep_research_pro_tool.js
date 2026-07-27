@@ -20,6 +20,41 @@ const REPORT_LINE_LABEL = {
 const PDF_LINE_LABEL = 'PDF written to:';
 
 /**
+ * Builds the environment for the Python subprocess so it talks to the SAME local LLM server
+ * and model PATTI itself is already using, rather than whatever the standalone
+ * deep_research_scraper project's own .env happens to have configured.
+ *
+ * This matters because both processes share one LM Studio server: if the Python project's own
+ * LLM_MODEL (a stale hardcoded default, historically "qwen2.5-coder-7b-instruct") names a
+ * different model than the one PATTI already has loaded, LM Studio loads a SECOND model
+ * alongside the first to satisfy the mismatched request - on a shared-memory system that can
+ * exhaust RAM and crash the research process outright (observed: the process exited with code 1
+ * and an empty stderr, consistent with an OS-level OOM kill rather than a normal Python
+ * exception, which would have printed a traceback).
+ *
+ * Only overrides anything when PATTI itself is in 'local' mode - if the user is on an online
+ * provider there is no shared local model to collide with, so the Python project's own
+ * independent configuration is left alone.
+ */
+async function buildResearchProcessEnv(db, userId) {
+  const env = { ...process.env };
+  try {
+    const settings = await db.get('SELECT * FROM user_settings WHERE user_id = ?', [userId]);
+    if (settings && settings.provider === 'local') {
+      env.LLM_PROVIDER = 'lmstudio';
+      env.LLM_BASE_URL = settings.local_url || process.env.LOCAL_LLM_URL || 'http://localhost:1234/v1';
+      env.LLM_MODEL = settings.preferred_local_model || settings.model_name || env.LLM_MODEL || '';
+      const { decrypt } = require('../utils/crypto');
+      const localKey = decrypt(settings.local_key);
+      if (localKey && localKey !== 'lm-studio') env.LLM_API_KEY = localKey;
+    }
+  } catch (err) {
+    console.error('Deep research pro: failed to build LLM env for subprocess, using its own .env config:', err.message);
+  }
+  return env;
+}
+
+/**
  * Handles the deep_research_pro tool: starts a genuinely thorough, multi-minute
  * background research crawl (or a full certification/skill study-guide build) using
  * the standalone Python deep_research_scraper project, and posts the finished
@@ -78,7 +113,8 @@ async function handleStartResearch(db, userId, params) {
 
   let child;
   try {
-    child = spawn(PYTHON_EXE, args, { cwd: DEEP_RESEARCH_SCRAPER_DIR });
+    const env = await buildResearchProcessEnv(db, userId);
+    child = spawn(PYTHON_EXE, args, { cwd: DEEP_RESEARCH_SCRAPER_DIR, env });
   } catch (err) {
     await finishJobWithFailure(db, userId, jobId, cleanTopic, `Failed to start research process: ${err.message}`);
     return `Error: Could not start the research process for "${cleanTopic}": ${err.message}`;
