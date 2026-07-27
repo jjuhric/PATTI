@@ -239,13 +239,23 @@ app.use('/tts', express.static(ttsDir));
 
 // Expose TTS generation API endpoint
 const { generateTTS } = require('./utils/tts');
-app.post('/api/tts', async (req, res) => {
+const { narrateForSpeech } = require('./utils/tts_narration');
+const { buildSettingsForUser } = require('./utils/llm_text');
+const { authenticateToken } = require('./middleware/auth');
+app.post('/api/tts', authenticateToken, async (req, res) => {
   try {
     const { text } = req.body;
     if (!text) {
       return res.status(400).json({ error: 'Text is required for TTS' });
     }
-    const audioUrl = await generateTTS(text);
+    let spokenText = text;
+    try {
+      const settings = await buildSettingsForUser(await getDb(), req.user.id);
+      spokenText = await narrateForSpeech(settings, text);
+    } catch (err) {
+      logger.warn('TTS narration step skipped, speaking raw text:', err.message);
+    }
+    const audioUrl = await generateTTS(spokenText);
     res.json({ audioUrl });
   } catch (err) {
     logger.error('TTS API error:', err);

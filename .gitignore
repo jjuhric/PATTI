@@ -23,6 +23,9 @@ test-results/
 # Logs (the *.log pattern alone misses rotated files like app-2026-07-19.log.1)
 *.log
 logs/*.log.*
+# winston-daily-rotate-file's bookkeeping file - rewritten on every rotation,
+# so tracking it shows a spurious modification in every single commit.
+logs/.*-audit.json
 
 # Process ID files
 *.pid

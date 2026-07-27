@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Network, FileText, Upload, Trash2, Cpu, Eye, CheckCircle, RefreshCw, Layers, Plus, Server, Monitor, Search, BookOpen, X, BarChart2, Cloud, Code, Shield, Wrench, UserPlus, Calendar, ChevronLeft, ChevronRight, Trophy, Newspaper } from 'lucide-react';
+import { Network, FileText, Upload, Trash2, Cpu, Eye, CheckCircle, RefreshCw, Layers, Plus, Server, Monitor, Search, BookOpen, X, BarChart2, Cloud, Code, Shield, Wrench, UserPlus, Calendar, ChevronLeft, ChevronRight, Trophy, Newspaper, Clapperboard, Microscope, Telescope, GraduationCap, FilePlus, FileEdit } from 'lucide-react';
 import TokenCountView from './TokenCountView';
 import RpiTerminalModal from './RpiTerminalModal';
 import LMStudioLogsView from './LMStudioLogsView';
@@ -95,6 +95,42 @@ const agents = [
     name: 'News Agent',
     icon: Newspaper,
     desc: 'Gathers general news briefs from TMZ and performs randomized searches on user preference topics, evaluating accuracy results.'
+  },
+  {
+    type: 'movie_tv',
+    name: 'Movie & TV Agent',
+    icon: Clapperboard,
+    desc: 'Finds what is new on streaming, upcoming release dates, and where to watch a title, using The Movie Database plus Rotten Tomatoes and Reddit for reviews.'
+  },
+  {
+    type: 'deep_research',
+    name: 'Deep Research Agent',
+    icon: Microscope,
+    desc: 'Crawls multiple sources on a topic and grows PATTI\'s permanent shared knowledge base so repeat questions are answered faster.'
+  },
+  {
+    type: 'deep_research_pro',
+    name: 'Deep Research Pro',
+    icon: Telescope,
+    desc: 'Runs a long-form multi-source web investigation in the background, reporting back later in the Deep Research Results chat.'
+  },
+  {
+    type: 'course_builder',
+    name: 'Course Builder Agent',
+    icon: GraduationCap,
+    desc: 'Writes full multi-lesson courses and study guides with PATTI\'s own model, saving them to disk and reporting back in the Generated Courses chat.'
+  },
+  {
+    type: 'document_generator',
+    name: 'Document Generator',
+    icon: FilePlus,
+    desc: 'Produces downloadable PDF, Word, Excel, and PowerPoint files from generated content.'
+  },
+  {
+    type: 'document_formatter',
+    name: 'Document Formatter',
+    icon: FileEdit,
+    desc: 'Reformats an uploaded document into clean headings, tables, and code blocks, optionally adding illustrative images.'
   }
 ];
 
@@ -637,6 +673,14 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
       if (agentType === 'node' && (thought.includes('node_agent') || thought.includes('node expert') || thought.includes('node agent'))) return 'Active';
       if (agentType === 'sports' && (thought.includes('sports_agent') || thought.includes('sports expert') || thought.includes('sports'))) return 'Active';
       if (agentType === 'news' && (thought.includes('news_agent') || thought.includes('news expert') || thought.includes('news'))) return 'Active';
+      if (agentType === 'movie_tv' && (thought.includes('movie_tv_agent') || thought.includes('movie & tv') || thought.includes('movie'))) return 'Active';
+      // "deep_research_pro_agent" does not contain "deep_research_agent", so these two stay
+      // distinct - but the pro check must not be written as a bare "deep_research" substring.
+      if (agentType === 'deep_research' && thought.includes('deep_research_agent')) return 'Active';
+      if (agentType === 'deep_research_pro' && thought.includes('deep_research_pro')) return 'Active';
+      if (agentType === 'course_builder' && (thought.includes('course_builder') || thought.includes('course builder'))) return 'Active';
+      if (agentType === 'document_generator' && (thought.includes('document_generator') || thought.includes('document generator'))) return 'Active';
+      if (agentType === 'document_formatter' && (thought.includes('document_formatter') || thought.includes('document formatter'))) return 'Active';
     }
 
     let currentAgent = activeAgent || (toolLogs && toolLogs.length > 0 ? (toolLogs[toolLogs.length - 1].agent || toolLogs[toolLogs.length - 1].tool) : null) || (isStreaming ? 'supervisor' : null);
@@ -660,8 +704,14 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
     if (agentType === 'developer' && (currentAgent === 'developer_agent' || currentAgent === 'developer' || currentAgent === 'dev_pipeline')) return 'Active';
     if (agentType === 'sports' && (currentAgent === 'sports_agent' || currentAgent === 'sports')) return 'Active';
     if (agentType === 'news' && (currentAgent === 'news_agent' || currentAgent === 'news')) return 'Active';
-
-    return 'Idle';
+    // Matches both the delegating agent name and the underlying tool name, since currentAgent
+    // falls back to the last tool log's tool when no agent was reported.
+    if (agentType === 'movie_tv' && (currentAgent === 'movie_tv_agent' || currentAgent === 'movie_tv' || currentAgent === 'movie')) return 'Active';
+    if (agentType === 'deep_research' && (currentAgent === 'deep_research_agent' || currentAgent === 'deep_research')) return 'Active';
+    if (agentType === 'deep_research_pro' && (currentAgent === 'deep_research_pro_agent' || currentAgent === 'deep_research_pro')) return 'Active';
+    if (agentType === 'course_builder' && (currentAgent === 'course_builder_agent' || currentAgent === 'course_builder')) return 'Active';
+    if (agentType === 'document_generator' && (currentAgent === 'document_generator_agent' || currentAgent === 'document_generator')) return 'Active';
+    if (agentType === 'document_formatter' && (currentAgent === 'document_formatter_agent' || currentAgent === 'document_formatter')) return 'Active';
 
     return 'Idle';
   };

@@ -138,9 +138,13 @@ describe('Weather Tool Tests', () => {
     });
 
     const result = await handleWeatherTool(db, userId, 'hourly', {});
-    expect(result).toContain('Hourly Weather Forecast for **Calhoun County**');
+    expect(result).toContain('Weather Forecast for **Calhoun County**');
     expect(result).toContain('77°F');
     expect(result).toContain('broken clouds');
+    // When the paid hourly endpoint refuses, the data is 3-hour blocks - the heading must say
+    // so rather than claiming hourly resolution.
+    expect(result).toContain('3-hour intervals');
+    expect(result).not.toContain('hourly)');
   });
 
   test('daily action - calculates daily values from standard 5-day forecast fallback', async () => {
@@ -181,6 +185,58 @@ describe('Weather Tool Tests', () => {
     expect(result).toContain('Daily Weather Forecast for **Calhoun County**');
     expect(result).toContain('80°F');
     expect(result).toContain('clear sky');
+  });
+
+  test('daily action - flags a partial day rather than reporting it as a full-day high/low', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ lat: 30.9254, lon: -85.1278, name: 'Calhoun County' })
+    });
+    global.fetch.mockResolvedValueOnce({ ok: false, status: 401 });
+
+    // Only 3 blocks for the day - what "today" looks like when asked mid-afternoon. A full
+    // day would be 8 blocks, so this range covers the evening only, not the real daily high.
+    const partialDayBlocks = [
+      { dt: 1661882400, main: { temp: 88.0, humidity: 55 }, weather: [{ description: 'scattered clouds' }], wind: { speed: 7.0 }, clouds: { all: 40 } },
+      { dt: 1661893200, main: { temp: 84.0, humidity: 62 }, weather: [{ description: 'scattered clouds' }], wind: { speed: 6.0 }, clouds: { all: 45 } },
+      { dt: 1661904000, main: { temp: 79.0, humidity: 70 }, weather: [{ description: 'clear sky' }], wind: { speed: 5.0 }, clouds: { all: 10 } }
+    ];
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ list: partialDayBlocks })
+    });
+
+    const result = await handleWeatherTool(db, userId, 'daily', { cnt: 1 });
+    expect(result).toContain('only)');
+    expect(result).toContain('not the full-day high/low');
+  });
+
+  test('daily action - does not flag a complete day', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ lat: 30.9254, lon: -85.1278, name: 'Calhoun County' })
+    });
+    global.fetch.mockResolvedValueOnce({ ok: false, status: 401 });
+
+    // 8 blocks at 3-hour spacing anchored to local midnight, so they all fall inside one
+    // America/Chicago calendar day (05:00 UTC is 00:00 CDT). Anchoring matters: blocks that
+    // straddle midnight split across two days and each partial group is correctly flagged.
+    const localMidnightUtc = Date.UTC(2026, 6, 15, 5, 0, 0) / 1000;
+    const fullDayBlocks = Array.from({ length: 8 }, (_, i) => ({
+      dt: localMidnightUtc + i * 10800,
+      main: { temp: 70 + i, humidity: 60 },
+      weather: [{ description: 'clear sky' }],
+      wind: { speed: 4.0 },
+      clouds: { all: 5 }
+    }));
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ list: fullDayBlocks })
+    });
+
+    const result = await handleWeatherTool(db, userId, 'daily', { cnt: 1 });
+    expect(result).not.toContain('only)');
+    expect(result).not.toContain('not the full-day high/low');
   });
 
   test('error path - geocoding fails', async () => {

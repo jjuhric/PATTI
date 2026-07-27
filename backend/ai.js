@@ -14,6 +14,20 @@ function defaultOnlineBaseUrl(onlineProvider) {
 }
 
 // Helper to call Local LLM (supporting openai, lm-studio, and anthropic API styles)
+// A cold model load in LM Studio can take longer than a minute before a single token is
+// emitted, so a 60s ceiling aborted perfectly healthy requests that merely had to wait for the
+// model to come back after an idle unload.
+const LOCAL_LLM_TIMEOUT_MS = Number(process.env.LOCAL_LLM_TIMEOUT_MS) || 180000;
+
+// Retrying instantly re-hits a model that is still loading and burns the retry for nothing.
+// Waiting first is what makes the retry actually worth having. Disabled under test so the
+// suite doesn't sit through real delays.
+const RETRY_BACKOFF_MS = process.env.NODE_ENV === 'test'
+  ? 0
+  : (Number(process.env.LLM_RETRY_BACKOFF_MS) || 5000);
+
+const sleep = (ms) => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
+
 async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft = 1) {
   const localStyle = apiStyle || 'openai';
   let endpoint = '';
@@ -99,7 +113,7 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 seconds timeout
+  const timeoutId = setTimeout(() => controller.abort(), LOCAL_LLM_TIMEOUT_MS);
 
   if (abortSignal) {
     abortSignal.addEventListener('abort', () => controller.abort());
@@ -116,7 +130,8 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
   } catch (fetchErr) {
     clearTimeout(timeoutId);
     if (retriesLeft > 0 && !abortSignal?.aborted) {
-      logger.warn(`Local LLM fetch exception, retrying (${retriesLeft} attempt(s) left): ${fetchErr.message}`);
+      logger.warn(`Local LLM fetch exception, retrying in ${RETRY_BACKOFF_MS}ms (${retriesLeft} attempt(s) left): ${fetchErr.message}`);
+      await sleep(RETRY_BACKOFF_MS);
       return callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft - 1);
     }
     logger.error('Local LLM fetch exception in callLocalLLMStream:', fetchErr);
@@ -128,7 +143,8 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
     const errText = await response.text();
     logger.error(`Local LLM response not ok: ${response.status} - ${errText}`);
     if (retriesLeft > 0 && !abortSignal?.aborted) {
-      logger.warn(`Local LLM returned an error response, retrying (${retriesLeft} attempt(s) left): ${response.status} - ${errText}`);
+      logger.warn(`Local LLM returned an error response, retrying in ${RETRY_BACKOFF_MS}ms (${retriesLeft} attempt(s) left): ${response.status} - ${errText}`);
+      await sleep(RETRY_BACKOFF_MS);
       return callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft - 1);
     }
     throw new Error(`LLM API error: ${response.status} - ${errText}`);
@@ -156,7 +172,8 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
 
     if (!content || !content.trim()) {
       if (retriesLeft > 0 && !abortSignal?.aborted) {
-        logger.warn(`Local LLM returned an empty response, retrying (${retriesLeft} attempt(s) left).`);
+        logger.warn(`Local LLM returned an empty response, retrying in ${RETRY_BACKOFF_MS}ms (${retriesLeft} attempt(s) left).`);
+        await sleep(RETRY_BACKOFF_MS);
         return callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft - 1);
       }
       throw new Error("Local LLM returned an empty response after retrying. The model or GPU backend may have failed mid-generation (possible GPU/driver instability) - please check LM Studio.");
@@ -226,7 +243,8 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
   } catch (streamErr) {
     console.error('LM Studio stream interrupted:', streamErr);
     if (!fullResponseText.trim() && retriesLeft > 0 && !abortSignal?.aborted) {
-      logger.warn(`Local LLM stream interrupted before any content was received, retrying (${retriesLeft} attempt(s) left): ${streamErr.message}`);
+      logger.warn(`Local LLM stream interrupted before any content was received, retrying in ${RETRY_BACKOFF_MS}ms (${retriesLeft} attempt(s) left): ${streamErr.message}`);
+      await sleep(RETRY_BACKOFF_MS);
       return callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft - 1);
     }
     throw new Error("Local LLM Connection Lost. The model may have run out of memory. Please lower context length.");
@@ -234,7 +252,8 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
 
   if (!fullResponseText.trim()) {
     if (retriesLeft > 0 && !abortSignal?.aborted) {
-      logger.warn(`Local LLM stream completed with no content, retrying (${retriesLeft} attempt(s) left).`);
+      logger.warn(`Local LLM stream completed with no content, retrying in ${RETRY_BACKOFF_MS}ms (${retriesLeft} attempt(s) left).`);
+      await sleep(RETRY_BACKOFF_MS);
       return callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft - 1);
     }
     throw new Error("Local LLM returned an empty response after retrying. The model or GPU backend may have failed mid-generation (possible GPU/driver instability) - please check LM Studio.");
@@ -668,7 +687,7 @@ async function runAgentLoop({
 ### INSTRUCTIONS:
 - You are operating in **MODE 2: Format Results**.
 - CRITICAL: You are NOT operating in MODE 1. Do NOT translate the request, do NOT output a JSON translation, and do NOT ask for clarification or missing information. Your ONLY task is to format the gathered results below.
-- If you output a thinking process, planning, or reasoning before your response, you MUST wrap it inside <think> and </think> tags. For example: <think>your thoughts here</think>your final response here.
+- If you need to reason before answering, wrap ALL of it inside <think> and </think> tags with nothing else outside those tags besides your final answer - for example: <think>your thoughts here</think>your final response here. Do NOT narrate your reasoning, rules, or operating mode outside the <think> tags - the visible response must begin immediately with the real answer to the user, never with a description of what you are about to do.
 - The user requested: "${userMessage}".
 - The Google Home device tool returned this execution result:
 ${toolOutput}
@@ -920,7 +939,7 @@ ${toolOutput}
 ### INSTRUCTIONS:
 - You are operating in **MODE 2: Format Results**.
 - CRITICAL: You are NOT operating in MODE 1. Do NOT translate the request, do NOT output a JSON translation, and do NOT ask for clarification or missing information. Your ONLY task is to format the gathered results below.
-- If you output a thinking process, planning, or reasoning before your response, you MUST wrap it inside <think> and </think> tags. For example: <think>your thoughts here</think>your final response here.
+- If you need to reason before answering, wrap ALL of it inside <think> and </think> tags with nothing else outside those tags besides your final answer - for example: <think>your thoughts here</think>your final response here. Do NOT narrate your reasoning, rules, or operating mode outside the <think> tags - the visible response must begin immediately with the real answer to the user, never with a description of what you are about to do.
 - The user requested: "${userMessage}".
 - The ${isAgentInfo ? 'System Specialist' : 'Memory Agent'} returned this context:
 ${toolOutput}
@@ -1249,7 +1268,18 @@ If no changes are required and you can proceed without executing the code, then 
         ...settings,
         modelName: supervisorModel || settings.modelName
       };
-      const supervisorInput = (process.env.NODE_ENV === 'test') ? userMessage : `Project Idea:\n${projectIdea}`;
+      let supervisorInput;
+      if (process.env.NODE_ENV === 'test') {
+        supervisorInput = userMessage;
+      } else if (toolCallsCount === 0) {
+        supervisorInput = `Project Idea:\n${projectIdea}`;
+      } else {
+        // Turns after the first repeat the same Project Idea as turn 1, which local models
+        // sometimes misread as a brand-new, data-less request - state explicitly that results
+        // already exist (in History Context below) so the model reasons over them instead of
+        // treating this turn as a fresh, unanswerable request.
+        supervisorInput = `Project Idea:\n${projectIdea}\n\nYou have already gathered ${accumulatedToolOutputs.length} tool/agent result(s) this conversation - see "History Context" below for exactly what was returned. Review them: if they already answer the request, set "tool" to "none" now so the response can be formatted. Only call another tool if something genuinely necessary is still missing.`;
+      }
       decision = await runAgentTurn('supervisor', systemPrompt, supervisorSettings, supervisorInput, currentHistory);
     } catch (err) {
       console.error('Supervisor turn failed, using fallback "none":', err);
@@ -1527,7 +1557,7 @@ If no changes are required and you can proceed without executing the code, then 
     if (onAgentStatus) onAgentStatus({ agent: 'supervisor', status: 'active' });
     onThought('Supervisor generating final response...\n');
     responderInstruction = `You are a helpful, smart AI Personal Assistant Supervisor.
-If you output a thinking process, planning, or reasoning before your response, you MUST wrap it inside <think> and </think> tags. For example: <think>your thoughts here</think>your final response here.
+If you need to reason before answering, wrap ALL of it inside <think> and </think> tags with nothing else outside those tags besides your final answer - for example: <think>your thoughts here</think>your final response here. Do NOT narrate your reasoning, rules, or operating mode outside the <think> tags - the visible response must begin immediately with the real answer to the user, never with a description of what you are about to do.
 CRITICAL: Avoid going in loops or repeating analysis. Keep any thinking process concise and make a clear decision quickly, then close the </think> tag and output your final response immediately.
 Here is the user request: "${userMessage}".
 ${accumulatedToolOutputs.length > 0 ? `We delegated tasks/queried tools to gather context. Here are the report/action results:\n${accumulatedToolOutputs.map(t => `--- [Source: ${t.tool}] ---\n${t.output}`).join('\n\n')}` : ''}
@@ -1550,7 +1580,7 @@ Make sure to answer the user query directly and clearly.`;
 ### INSTRUCTIONS:
 - You are operating in **MODE 2: Format Results**.
 - CRITICAL: You are NOT operating in MODE 1. Do NOT translate the request, do NOT output a JSON translation, and do NOT ask for clarification or missing information. Your ONLY task is to format the gathered results below.
-- If you output a thinking process, planning, or reasoning before your response, you MUST wrap it inside <think> and </think> tags. For example: <think>your thoughts here</think>your final response here.
+- If you need to reason before answering, wrap ALL of it inside <think> and </think> tags with nothing else outside those tags besides your final answer - for example: <think>your thoughts here</think>your final response here. Do NOT narrate your reasoning, rules, or operating mode outside the <think> tags - the visible response must begin immediately with the real answer to the user, never with a description of what you are about to do.
 - Present a warm, bubbly, and welcoming final response containing ALL details of the gathered report results below.
 - CRITICAL: The gathered report/action results below (if any) are ALL the information you have - there is no further data coming. Never describe an action as "in progress", "being processed", "underway", or "will be provided shortly". If no results are present below and the request needed data you don't have, say so plainly instead of fabricating a status update.
 - Here is the user request: "${userMessage}".
