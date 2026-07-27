@@ -8,6 +8,14 @@ const { handleTimeTool } = require('./tools/time_tool');
 const { defaultOnlineBaseUrl, resolveTarget } = require('./llm/provider_config');
 const { callLocalLLMStream } = require('./llm/local_stream');
 const { callGeminiStream } = require('./llm/gemini_stream');
+const {
+  isSendMessageCommand,
+  isIpOnlyMessage,
+  stripSendMessagePrefix,
+  isGoogleHomeDeviceRequest,
+  isAgentInfoRequest,
+  isUserInfoRequest
+} = require('./services/interceptors');
 
 // Run the agent loop
 // Run the agent loop (Multi-Agent Coordinator)
@@ -55,8 +63,8 @@ async function runAgentLoop({
 
   // --- Direct Send Message to Device Interceptor ---
   const cleanMsgForSend = userMessage.trim().toLowerCase();
-  const isSendMsgPattern = /^\s*send\s+(?:a\s+)?message\s+to\s+(?:device|esp32|esp)\b/i.test(cleanMsgForSend);
-  const isIpOnlyPattern = /^\s*(?:\d{1,3}\.){3}\d{1,3}\s*$/i.test(cleanMsgForSend);
+  const isSendMsgPattern = isSendMessageCommand(userMessage);
+  const isIpOnlyPattern = isIpOnlyMessage(userMessage);
 
   if (isIpOnlyPattern && chatId) {
     let lastMsgs = [];
@@ -71,10 +79,10 @@ async function runAgentLoop({
 
     const lastAssistantMsg = lastMsgs.find(m => m.role === 'assistant');
     if (lastAssistantMsg && lastAssistantMsg.content.includes('Which device would you like to send this message to?')) {
-      const originalUserMsgObj = lastMsgs.find(m => m.role === 'user' && /^\s*send\s+(?:a\s+)?message\s+to\s+(?:device|esp32|esp)\b/i.test(m.content));
+      const originalUserMsgObj = lastMsgs.find(m => m.role === 'user' && isSendMessageCommand(m.content));
       if (originalUserMsgObj) {
         const ip = userMessage.trim();
-        let temp = originalUserMsgObj.content.replace(/^\s*send\s+(?:a\s+)?message\s+to\s+(?:device|esp32|esp)\b/i, '');
+        let temp = stripSendMessagePrefix(originalUserMsgObj.content);
         temp = temp.replace(/^\s*saying/i, '');
         const text = temp.trim();
 
@@ -174,7 +182,7 @@ async function runAgentLoop({
       if (ipMatch) {
         temp = temp.replace(new RegExp(`\\b${ip}\\b`, 'g'), '');
       }
-      temp = temp.replace(/^\s*send\s+(?:a\s+)?message\s+to\s+(?:device|esp32|esp)\b/i, '');
+      temp = stripSendMessagePrefix(temp);
       temp = temp.replace(/^\s*saying/i, '');
       const text = temp.trim();
 
@@ -281,31 +289,6 @@ async function runAgentLoop({
   }
 
   // --- Google Home Direct Bypass Interceptor ---
-  const isGoogleHomeDeviceRequest = (msg) => {
-    const cleanMsg = msg.trim().toLowerCase();
-    const locations = [
-      'office', 'living room', 'bedroom', 'faith\'s room', 'jeffery\'s room', 'all'
-    ];
-
-    const devices = [
-      'light', 'lights', 'tv', 't.v.', 'television', 'fan', 'plug', 'speaker',
-      'nest', 'mini', 'display', 'screen', 'air conditioner', 'ac', 'heater',
-      'switch', 'plug', 'device', 'thermostat', 'camera'
-    ];
-
-    const matchedLoc = locations.find(loc => new RegExp(`\\b${loc.replace("'", "\\'")}\\b`, 'i').test(cleanMsg));
-    const matchedDev = devices.find(dev => {
-      const escapedDev = dev.replace('.', '\\.').replace("'", "\\'");
-      return new RegExp(`\\b${escapedDev}\\b`, 'i').test(cleanMsg);
-    });
-
-    if (!matchedLoc || !matchedDev) return false;
-
-    const hasAction = /\b(turn|make|set|dim|brighten|increase|decrease|pause|resume|stop|play)\b/i.test(cleanMsg);
-
-    return hasAction;
-  };
-
   if (isGoogleHomeDeviceRequest(userMessage)) {
     onThought("[Google Home Intercept] Direct action/location/device command detected. Bypassing supervisor and sending directly to Google Assistant...\n");
     if (onAgentStatus) onAgentStatus({ agent: 'system_specialist', status: 'active' });
@@ -535,26 +518,6 @@ ${toolOutput}
   settings.workingDirectory = workingDirectory;
 
   // --- Personal Info Interceptor ---
-  const isAgentInfoRequest = (msg) => {
-    const cleanMsg = msg.trim().toLowerCase();
-    const yourKeywords = [
-      'your info', 'your information', 'about you', 'who are you',
-      'your specs', 'your host', 'your system', 'your settings', 'your name'
-    ];
-    return yourKeywords.some(kw => cleanMsg.includes(kw));
-  };
-
-  const isUserInfoRequest = (msg) => {
-    const cleanMsg = msg.trim().toLowerCase();
-    const myKeywords = [
-      'my info', 'my information', 'about me', 'who am i',
-      'my details', 'my profile', 'my name', 'my birthday',
-      'my dob', 'my zipcode', 'my location', 'my age',
-      'my gender', 'my interests'
-    ];
-    return myKeywords.some(kw => cleanMsg.includes(kw));
-  };
-
   if (isAgentInfoRequest(userMessage) || isUserInfoRequest(userMessage)) {
     const isAgentInfo = isAgentInfoRequest(userMessage);
     const targetAgent = isAgentInfo ? 'system_specialist' : 'memory_agent';
