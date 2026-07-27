@@ -1237,18 +1237,32 @@ Make sure to answer the user query directly and clearly.`;
     } catch (timeErr) {
       console.error('Failed to get current time for responder instruction:', timeErr);
     }
-    responderInstruction = `${mode2SystemPrompt}${activePersonalityPrompt}
+    // The DATA block is placed FIRST and led with an unambiguous, deterministic flag (computed
+    // in code, not left for the model to judge) - a smaller/quantized local model reasoning
+    // step-by-step can otherwise talk itself into claiming results are missing even when they
+    // were included further down the prompt (observed: a successful weather_expert result was
+    // in this exact prompt, but the model still answered "could you remind me of your zipcode?").
+    const hasResults = accumulatedToolOutputs.length > 0;
+    const dataBlock = hasResults
+      ? `DATA_AVAILABLE: yes\n${accumulatedToolOutputs.map(t => `--- [Source: ${t.tool}] ---\n${t.output}`).join('\n\n')}`
+      : 'DATA_AVAILABLE: no';
+
+    responderInstruction = `### DATA (this is 100% of the information available - there is no more coming):
+${dataBlock}
+
+${mode2SystemPrompt}${activePersonalityPrompt}
 
 ### INSTRUCTIONS:
 - You are operating in **MODE 2: Format Results**.
-- CRITICAL: You are NOT operating in MODE 1. Do NOT translate the request, do NOT output a JSON translation, and do NOT ask for clarification or missing information. Your ONLY task is to format the gathered results below.
-- If you need to reason before answering, wrap ALL of it inside <think> and </think> tags with nothing else outside those tags besides your final answer - for example: <think>your thoughts here</think>your final response here. Do NOT narrate your reasoning, rules, or operating mode outside the <think> tags - the visible response must begin immediately with the real answer to the user, never with a description of what you are about to do.
-- Present a warm, bubbly, and welcoming final response containing ALL details of the gathered report results below.
-- CRITICAL: The gathered report/action results below (if any) are ALL the information you have - there is no further data coming. Never describe an action as "in progress", "being processed", "underway", or "will be provided shortly". If no results are present below and the request needed data you don't have, say so plainly instead of fabricating a status update.
+- CRITICAL: You are NOT operating in MODE 1. Do NOT translate the request, do NOT output a JSON translation, and do NOT ask for clarification or missing information. Your ONLY task is to format the DATA above into a final answer.
+- CRITICAL: Trust the "DATA_AVAILABLE" flag above exactly as given - do not second-guess or re-derive it.
+  - If DATA_AVAILABLE is "yes": the content below it is real, already-gathered results. Use it directly to answer. Do NOT claim the information is missing, unavailable, or still being gathered. Do NOT ask the user for details (like a zipcode or a name) that already appear in the DATA above - if it's there, use it.
+  - If DATA_AVAILABLE is "no": no data was gathered. Say so plainly instead of fabricating a status update. Never describe an action as "in progress", "being processed", "underway", or "will be provided shortly".
+- If you need to reason before answering, wrap ALL of it inside <think> and </think> tags with nothing else outside those tags besides your final answer - for example: <think>your thoughts here</think>your final response here. Do NOT narrate your reasoning, rules, self-doubt, or operating mode outside the <think> tags (no "wait", "let me reconsider", "self-correction", or similar visible in the response) - the visible response must begin immediately with the real answer to the user, never with a description of what you are about to do. Keep any reasoning brief and decisive - do not go back and forth.
+- Present a warm, bubbly, and welcoming final response containing ALL relevant details from the DATA above.
 - Here is the user request: "${userMessage}".
 - Project Idea that was executed: "${projectIdea}"
-${currentTimeContext ? `\n### Current System Time Context:\n${currentTimeContext}\n` : ''}
-${accumulatedToolOutputs.length > 0 ? `Here are the gathered report/action results:\n${accumulatedToolOutputs.map(t => `--- [Source: ${t.tool}] ---\n${t.output}`).join('\n\n')}` : 'No tool/agent results were gathered for this request.'}`;
+${currentTimeContext ? `\n### Current System Time Context:\n${currentTimeContext}\n` : ''}`;
   }
 
   const isGemini = provider === 'gemini' || (provider === 'online' && onlineProvider === 'gemini');

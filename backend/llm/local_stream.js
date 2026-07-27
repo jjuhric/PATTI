@@ -1,5 +1,6 @@
 const logger = require('../utils/logger');
 const { buildHeaders, resolveEndpoint, buildStreamBody, extractResponseText } = require('./provider_config');
+const { ThinkTagFilter, stripThinkTags } = require('./think_filter');
 
 // A cold model load in LM Studio can take longer than a minute before a single token is
 // emitted, so a 60s ceiling aborted perfectly healthy requests that merely had to wait for the
@@ -84,9 +85,13 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
     } else {
       data = await response.json();
     }
-    const content = extractResponseText(data, localStyle);
+    const rawContent = extractResponseText(data, localStyle);
+    // Strip <think>/<|channel>thought reasoning blocks before anything reaches the user - a
+    // response that turns out to be pure reasoning with no visible answer is treated the same
+    // as a genuinely empty response (retry) rather than being shown to the user as-is.
+    const visibleContent = rawContent ? stripThinkTags(rawContent) : rawContent;
 
-    if (!content || !content.trim()) {
+    if (!visibleContent || !visibleContent.trim()) {
       if (retriesLeft > 0 && !abortSignal?.aborted) {
         logger.warn(`Local LLM returned an empty response, retrying in ${RETRY_BACKOFF_MS}ms (${retriesLeft} attempt(s) left).`);
         await sleep(RETRY_BACKOFF_MS);
@@ -95,8 +100,8 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
       throw new Error("Local LLM returned an empty response after retrying. The model or GPU backend may have failed mid-generation (possible GPU/driver instability) - please check LM Studio.");
     }
 
-    onChunk(content);
-    fullResponseText += content;
+    onChunk(visibleContent);
+    fullResponseText += rawContent;
 
     // Save token usage
     let tokenCount = 0;
@@ -125,6 +130,7 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
   const reader = response.body.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
+  const thinkFilter = new ThinkTagFilter(onChunk);
 
   try {
     while (true) {
@@ -147,7 +153,7 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
             // Support both OpenAI format and Anthropic format chunk parsing
             const text = parsed.choices?.[0]?.delta?.content || parsed.delta?.text || parsed.response || parsed.content;
             if (text) {
-              onChunk(text);
+              thinkFilter.feed(text);
               fullResponseText += text;
             }
           } catch (e) {
@@ -166,7 +172,11 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
     throw new Error("Local LLM Connection Lost. The model may have run out of memory. Please lower context length.");
   }
 
-  if (!fullResponseText.trim()) {
+  thinkFilter.end();
+
+  // A stream that was pure reasoning (everything inside <think> tags, nothing after) has raw
+  // text but nothing the user ever saw - treat it the same as a genuinely empty response.
+  if (!fullResponseText.trim() || !thinkFilter.hasVisibleContent) {
     if (retriesLeft > 0 && !abortSignal?.aborted) {
       logger.warn(`Local LLM stream completed with no content, retrying in ${RETRY_BACKOFF_MS}ms (${retriesLeft} attempt(s) left).`);
       await sleep(RETRY_BACKOFF_MS);
