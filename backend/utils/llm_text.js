@@ -2,6 +2,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { decrypt } = require('./crypto');
 const { llmFetchSignal } = require('./fetchTimeout');
 const { defaultOnlineBaseUrl, resolveTarget, resolveEndpoint, buildHeaders, buildBody, extractResponseText } = require('../llm/provider_config');
+const { stripThinkTags } = require('../llm/think_filter');
 
 // Build the LLM-calling settings object for a specific userId with no active HTTP request
 // in scope - same approach backend/services/research_daemon.js uses for its own background
@@ -110,10 +111,7 @@ async function generateTextRaw(settings, systemPrompt, userPrompt) {
     }
   }
 
-  return respText
-    .replace(/<think>[\s\S]*?<\/think>/g, '')
-    .replace(/<\|channel>thought[\s\S]*?<channel\|>/g, '')
-    .trim();
+  return stripThinkTags(respText);
 }
 
 module.exports = { generateText, buildSettingsForUser, defaultOnlineBaseUrl };

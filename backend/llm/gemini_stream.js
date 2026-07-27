@@ -1,4 +1,5 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { ThinkTagFilter } = require('./think_filter');
 
 /**
  * Streams a chat completion from Gemini. Unlike callLocalLLMStream, Gemini's SDK handles
@@ -25,14 +26,16 @@ async function callGeminiStream(apiKey, modelName, systemInstruction, history, u
 
   const result = await model.generateContentStream({ contents }, { signal: abortSignal });
   let fullResponseText = '';
+  const thinkFilter = new ThinkTagFilter(onChunk);
   for await (const chunk of result.stream) {
     if (abortSignal?.aborted) break;
     const text = chunk.text();
     if (text) {
-      onChunk(text);
+      thinkFilter.feed(text);
       fullResponseText += text;
     }
   }
+  thinkFilter.end();
 
   // Record token usage
   let tokenCount = 0;

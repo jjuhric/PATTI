@@ -82,6 +82,15 @@ describe('callLocalLLMStream - non-streaming JSON response', () => {
     ).rejects.toThrow(/LLM API error: 503/);
   });
 
+  test('strips a <think> reasoning block from a non-streaming JSON response', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({
+      choices: [{ message: { content: '<think>internal reasoning</think>The weather is sunny.' } }]
+    }));
+    const onChunk = jest.fn();
+    await callLocalLLMStream('http://x:1234/v1', 'lm-studio', 'model', [], 'lm-studio', onChunk, null, null, null, 'local');
+    expect(onChunk).toHaveBeenCalledWith('The weather is sunny.');
+  });
+
   test('gives a specific hint when LM Studio\'s server is not started', async () => {
     global.fetch.mockResolvedValueOnce({
       ok: true,
@@ -130,6 +139,34 @@ describe('callLocalLLMStream - streaming (text/event-stream) response', () => {
     await expect(
       callLocalLLMStream('http://x:1234/v1', 'lm-studio', 'model', [], 'lm-studio', jest.fn(), abortSignal, null, null, 'local', 0)
     ).rejects.toThrow();
+  });
+
+  test('strips a <think> reasoning block out of the streamed output instead of leaking it to the user', async () => {
+    global.fetch.mockResolvedValueOnce(streamResponse([
+      'data: {"choices":[{"delta":{"content":"<think>the user wants "}}]}\n',
+      'data: {"choices":[{"delta":{"content":"weather</think>It\'s sunny!"}}]}\n',
+      'data: [DONE]\n'
+    ]));
+    const onChunk = jest.fn();
+    await callLocalLLMStream('http://x:1234/v1', 'lm-studio', 'model', [], 'lm-studio', onChunk, null, null, null, 'local');
+    expect(onChunk.mock.calls.map((c) => c[0]).join('')).toBe("It's sunny!");
+    expect(onChunk.mock.calls.some((c) => c[0].includes('the user wants'))).toBe(false);
+  });
+
+  test('retries when the stream is pure reasoning with no visible answer', async () => {
+    global.fetch
+      .mockResolvedValueOnce(streamResponse([
+        'data: {"choices":[{"delta":{"content":"<think>only reasoning, no answer</think>"}}]}\n',
+        'data: [DONE]\n'
+      ]))
+      .mockResolvedValueOnce(streamResponse([
+        'data: {"choices":[{"delta":{"content":"Real answer."}}]}\n',
+        'data: [DONE]\n'
+      ]));
+    const onChunk = jest.fn();
+    await callLocalLLMStream('http://x:1234/v1', 'lm-studio', 'model', [], 'lm-studio', onChunk, null, null, null, 'local', 1);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(onChunk.mock.calls.map((c) => c[0]).join('')).toBe('Real answer.');
   });
 });
 
