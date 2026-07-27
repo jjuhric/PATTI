@@ -7,11 +7,7 @@ const { handleWeatherTool } = require('./tools/weather_tool');
 const { handleMemoryTool } = require('./tools/memory_tool');
 const { handleTimeTool } = require('./tools/time_tool');
 const logger = require('./utils/logger');
-
-// Anthropic doesn't share OpenAI's base URL, so give it its own default.
-function defaultOnlineBaseUrl(onlineProvider) {
-  return onlineProvider === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1';
-}
+const { defaultOnlineBaseUrl, resolveTarget, resolveEndpoint, buildHeaders, buildStreamBody, extractResponseText } = require('./llm/provider_config');
 
 // Helper to call Local LLM (supporting openai, lm-studio, and anthropic API styles)
 // A cold model load in LM Studio can take longer than a minute before a single token is
@@ -30,87 +26,9 @@ const sleep = (ms) => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)
 
 async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle, onChunk, abortSignal, db, userId, provider, retriesLeft = 1) {
   const localStyle = apiStyle || 'openai';
-  let endpoint = '';
-  let headers = {
-    'Content-Type': 'application/json'
-  };
-
-  if (apiKey && apiKey !== 'lm-studio') {
-    if (localStyle === 'anthropic') {
-      headers['x-api-key'] = apiKey;
-      headers['anthropic-version'] = '2023-06-01';
-    } else {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
-  }
-
-  let body = {};
-
-  try {
-    const urlObj = new URL(baseUrl);
-    const origin = urlObj.origin;
-
-    if (localStyle === 'lm-studio') {
-      endpoint = `${origin}/v1/chat/completions`;
-    } else if (localStyle === 'anthropic') {
-      endpoint = `${origin}/v1/messages`;
-    } else if (localStyle === 'local-gemini') {
-      endpoint = `${origin}/api/v1/chat`;
-    } else {
-      endpoint = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
-    }
-  } catch (e) {
-    if (localStyle === 'local-gemini') {
-      endpoint = `${baseUrl.replace(/\/$/, '')}/api/v1/chat`;
-    } else {
-      endpoint = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
-    }
-  }
-
-  const finalModel = (modelName === 'qwen2.5-coder-7b-instruct') ? (process.env.OPENAI_API_MODEL || 'qwen2.5-coder-7b-instruct') : modelName;
-
-  if (localStyle === 'anthropic') {
-    // Anthropic style formatting
-    const systemMessage = messages.find(m => m.role === 'system')?.content || '';
-    const anthropicMessages = messages
-      .filter(m => m.role !== 'system')
-      .map(m => ({
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: m.content
-      }));
-
-    body = {
-      model: finalModel,
-      messages: anthropicMessages,
-      stream: true
-    };
-    if (systemMessage) {
-      body.system = systemMessage;
-    }
-  } else if (localStyle === 'local-gemini') {
-    const systemMessage = messages.find(m => m.role === 'system')?.content || '';
-    const conversation = messages
-      .filter(m => m.role !== 'system')
-      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-      .join('\n');
-
-    body = {
-      model: finalModel,
-      system_prompt: systemMessage,
-      input: conversation
-    };
-  } else {
-    // OpenAI and LM Studio style formatting
-    body = {
-      model: finalModel,
-      messages: messages,
-      temperature: 0.7,
-      frequency_penalty: 0.3,
-      presence_penalty: 0.1,
-      stream: true,
-      ...(localStyle === 'lm-studio' ? { num_ctx: 24576 } : {})
-    };
-  }
+  const headers = buildHeaders(apiKey, localStyle);
+  const endpoint = resolveEndpoint(baseUrl, localStyle);
+  const body = buildStreamBody({ targetStyle: localStyle, modelName, messages });
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), LOCAL_LLM_TIMEOUT_MS);
@@ -168,7 +86,7 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
     } else {
       data = await response.json();
     }
-    const content = data.choices?.[0]?.message?.content || data.content?.[0]?.text || data.response || data.content;
+    const content = extractResponseText(data, localStyle);
 
     if (!content || !content.trim()) {
       if (retriesLeft > 0 && !abortSignal?.aborted) {
@@ -710,19 +628,9 @@ ${toolOutput}
         provider
       );
     } else {
-      let targetUrl = '';
-      let targetKey = '';
-      let targetStyle = '';
-
-      if (provider === 'local') {
-        targetUrl = localBaseUrl || process.env.LOCAL_LLM_URL || 'http://localhost:1234/v1';
-        targetKey = localApiKey;
-        targetStyle = localApiStyle || 'openai';
-      } else {
-        targetUrl = onlineUrl || defaultOnlineBaseUrl(onlineProvider);
-        targetKey = onlineKey;
-        targetStyle = onlineProvider || 'openai';
-      }
+      const { targetUrl, targetKey, targetStyle } = resolveTarget({
+        provider, localBaseUrl, localApiKey, localApiStyle, onlineUrl, onlineKey, onlineProvider
+      });
 
       const messages = [
         { role: 'system', content: responderInstruction }
@@ -963,19 +871,9 @@ ${profileDetailsText ? `Here is the user profile details context:\n${profileDeta
         provider
       );
     } else {
-      let targetUrl = '';
-      let targetKey = '';
-      let targetStyle = '';
-
-      if (provider === 'local') {
-        targetUrl = localBaseUrl || process.env.LOCAL_LLM_URL || 'http://localhost:1234/v1';
-        targetKey = localApiKey;
-        targetStyle = localApiStyle || 'openai';
-      } else {
-        targetUrl = onlineUrl || defaultOnlineBaseUrl(onlineProvider);
-        targetKey = onlineKey;
-        targetStyle = onlineProvider || 'openai';
-      }
+      const { targetUrl, targetKey, targetStyle } = resolveTarget({
+        provider, localBaseUrl, localApiKey, localApiStyle, onlineUrl, onlineKey, onlineProvider
+      });
 
       let userContent = userMessage;
       if (images && images.length > 0 && targetStyle !== 'anthropic' && targetStyle !== 'local-gemini') {
@@ -1606,19 +1504,9 @@ ${accumulatedToolOutputs.length > 0 ? `Here are the gathered report/action resul
       provider
     );
   } else {
-    let targetUrl = '';
-    let targetKey = '';
-    let targetStyle = '';
-
-    if (provider === 'local') {
-      targetUrl = localBaseUrl || process.env.LOCAL_LLM_URL || 'http://localhost:1234/v1';
-      targetKey = localApiKey;
-      targetStyle = localApiStyle || 'openai';
-    } else {
-      targetUrl = onlineUrl || defaultOnlineBaseUrl(onlineProvider);
-      targetKey = onlineKey;
-      targetStyle = onlineProvider || 'openai';
-    }
+    const { targetUrl, targetKey, targetStyle } = resolveTarget({
+      provider, localBaseUrl, localApiKey, localApiStyle, onlineUrl, onlineKey, onlineProvider
+    });
 
     const messages = [
       { role: 'system', content: responderInstruction }
