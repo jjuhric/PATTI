@@ -78,6 +78,9 @@ function App() {
   const [isSetupComplete, setIsSetupComplete] = useState(true);
   const [isEsp32ModalOpen, setIsEsp32ModalOpen] = useState(false);
   const [hostIps, setHostIps] = useState([]);
+  const [sessionTokens, setSessionTokens] = useState(0);
+  const [searchUsage, setSearchUsage] = useState(null); // { configured, used, limit }
+  const sessionStartRef = useRef(new Date().toISOString());
   const [sudoPrompt, setSudoPrompt] = useState(null); // { commandId, approved, editedCmd, commandText }
   const [settings, setSettings] = useState({
     provider: 'local',
@@ -226,6 +229,41 @@ function App() {
     };
     fetchVersion();
   }, []);
+
+  // Header stats: tokens used since this tab was opened, and Tavily web-search credit usage.
+  // Polled rather than pushed over SSE since neither needs to update more than every ~20s.
+  useEffect(() => {
+    if (!token) return;
+
+    const fetchHeaderStats = async () => {
+      try {
+        const tokenRes = await fetch(`/api/token-usage?since=${encodeURIComponent(sessionStartRef.current)}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (tokenRes.ok) {
+          const data = await tokenRes.json();
+          setSessionTokens(data.totalTokens || 0);
+        }
+      } catch (err) {
+        console.error('Failed to fetch session token usage:', err);
+      }
+
+      try {
+        const searchRes = await fetch('/api/search-usage', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (searchRes.ok) {
+          setSearchUsage(await searchRes.json());
+        }
+      } catch (err) {
+        console.error('Failed to fetch search usage:', err);
+      }
+    };
+
+    fetchHeaderStats();
+    const interval = setInterval(fetchHeaderStats, 20000);
+    return () => clearInterval(interval);
+  }, [token]);
 
   useEffect(() => {
     if (activeChatId) {
@@ -1048,11 +1086,6 @@ function App() {
             >
                {activeTab === 'chat' ? (
                  <span className="patti-header-brand" style={{ display: 'inline-flex', alignItems: 'center' }}>
-                   <img
-                     src="/patti_text.png"
-                     alt="PATTI"
-                     className="patti-logo-image header-patti-logo header-only-mobile"
-                   />
                    <span className="patti-fullname">
                      <span className="special-letter">P</span>
                      <span className="normal-text">rofessional&nbsp;</span>
@@ -1073,6 +1106,27 @@ function App() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
 
+            <div className="header-stats-group">
+              <div className="header-stat-badge" title="Tokens used since this tab was opened">
+                <span className="header-stat-label">Tokens</span>
+                <span className="header-stat-value">{sessionTokens.toLocaleString()}</span>
+              </div>
+              <div
+                className="header-stat-badge"
+                title={searchUsage?.configured === false ? 'Tavily web search is not configured' : 'Web search credits used this billing period'}
+              >
+                <span className="header-stat-label">Search</span>
+                <span className="header-stat-value">
+                  {searchUsage && searchUsage.configured
+                    ? `${searchUsage.used.toLocaleString()}/${searchUsage.limit.toLocaleString()}`
+                    : '—'}
+                </span>
+              </div>
+              <div className="header-stat-badge" title="This device's local network IP address">
+                <span className="header-stat-label">IP</span>
+                <span className="header-stat-value">{hostIps[0] || '—'}</span>
+              </div>
+            </div>
 
             <div className="model-config-badge">
               <span className={`connection-dot ${settings.provider === 'online' ? 'online' : 'local'}`}></span>
