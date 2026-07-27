@@ -101,13 +101,26 @@ async function tavilySearch(query, options = {}) {
   };
 }
 
+// The /usage endpoint reflects one account-wide total, so every user/tab polling the header
+// stat is asking the exact same question - caching it here (rather than per-request) means N
+// open tabs cost 1 real Tavily call per TTL window instead of N, which is what actually
+// triggered Tavily's own "excessive requests" 429 on this endpoint after the header stats
+// feature shipped. On a fetch failure (including that 429), serve the last-known-good value
+// instead of null so a transient rate-limit doesn't flash the UI to "-".
+const USAGE_CACHE_TTL_MS = 60000;
+let usageCache = null;
+let usageCacheAt = 0;
+
 /**
  * Fetches API-key usage/limit from Tavily's /usage endpoint, for surfacing "X / 1000 credits
  * used" in the UI. Server-scoped (one shared TAVILY_API_KEY), not per-user.
- * @returns {Promise<{used: number, limit: number}|null>} null if not configured or the call fails.
+ * @returns {Promise<{used: number, limit: number}|null>} null if not configured, or the call
+ *   fails with no prior cached value to fall back on.
  */
 async function getTavilyUsage() {
   if (!isConfigured()) return null;
+  if (usageCache && Date.now() - usageCacheAt < USAGE_CACHE_TTL_MS) return usageCache;
+
   try {
     const data = await tavilyFetch('/usage');
     // account.plan_usage/plan_limit is the account-wide total shown on Tavily's own dashboard
@@ -119,11 +132,30 @@ async function getTavilyUsage() {
     const account = data.account;
     const used = account ? (account.plan_usage ?? 0) : (data.key?.usage ?? 0);
     const limit = account ? (account.plan_limit ?? 0) : (data.key?.limit ?? 0);
-    return { used, limit };
+    usageCache = { used, limit };
+    usageCacheAt = Date.now();
+    return usageCache;
   } catch (err) {
     console.error('Failed to fetch Tavily usage:', err.message);
-    return null;
+    return usageCache;
   }
 }
 
-module.exports = { tavilySearch, getTavilyUsage, isConfigured };
+function _resetUsageCacheForTests() {
+  usageCache = null;
+  usageCacheAt = 0;
+}
+
+// Keeps the cached value but marks it stale, so tests can exercise the "re-fetch, fall back to
+// last-known-good on failure" path without waiting out the real TTL.
+function _expireUsageCacheForTests() {
+  usageCacheAt = 0;
+}
+
+module.exports = {
+  tavilySearch,
+  getTavilyUsage,
+  isConfigured,
+  _resetUsageCacheForTests,
+  _expireUsageCacheForTests
+};

@@ -231,7 +231,9 @@ function App() {
   }, []);
 
   // Header stats: tokens used since this tab was opened, and Tavily web-search credit usage.
-  // Polled rather than pushed over SSE since neither needs to update more than every ~20s.
+  // Polled rather than pushed over SSE since neither needs to update more than every ~60s -
+  // Tavily's /usage endpoint rate-limits itself under too-frequent polling (observed a 429
+  // in production with several tabs open), and the backend also caches it for 60s server-side.
   useEffect(() => {
     if (!token) return;
 
@@ -261,7 +263,7 @@ function App() {
     };
 
     fetchHeaderStats();
-    const interval = setInterval(fetchHeaderStats, 20000);
+    const interval = setInterval(fetchHeaderStats, 60000);
     return () => clearInterval(interval);
   }, [token]);
 

@@ -1,4 +1,10 @@
-const { tavilySearch, getTavilyUsage, isConfigured } = require('../utils/tavily_search');
+const {
+  tavilySearch,
+  getTavilyUsage,
+  isConfigured,
+  _resetUsageCacheForTests,
+  _expireUsageCacheForTests
+} = require('../utils/tavily_search');
 
 global.fetch = jest.fn();
 
@@ -7,6 +13,7 @@ const ORIGINAL_KEY = process.env.TAVILY_API_KEY;
 beforeEach(() => {
   jest.clearAllMocks();
   process.env.TAVILY_API_KEY = 'tvly-test-key';
+  _resetUsageCacheForTests();
 });
 
 afterAll(() => {
@@ -153,9 +160,30 @@ describe('getTavilyUsage', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  test('returns null (not a throw) when the API call fails', async () => {
+  test('returns null (not a throw) when the API call fails with no prior cached value', async () => {
     global.fetch.mockResolvedValueOnce(jsonResponse({}, false, 401));
     const usage = await getTavilyUsage();
     expect(usage).toBeNull();
+  });
+
+  test('caches the result so repeated calls within the TTL do not re-hit the API', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ account: { plan_usage: 10, plan_limit: 1000 } }));
+    const first = await getTavilyUsage();
+    const second = await getTavilyUsage();
+    expect(first).toEqual({ used: 10, limit: 1000 });
+    expect(second).toEqual({ used: 10, limit: 1000 });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('serves the last-known-good cached value when a later call fails (e.g. a 429)', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ account: { plan_usage: 20, plan_limit: 1000 } }));
+    await getTavilyUsage();
+
+    _expireUsageCacheForTests();
+    global.fetch.mockResolvedValueOnce(jsonResponse({ detail: { error: 'rate limited' } }, false, 429));
+
+    const usage = await getTavilyUsage();
+    expect(usage).toEqual({ used: 20, limit: 1000 });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 });
