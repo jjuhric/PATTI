@@ -444,6 +444,48 @@ describe('Agent Loop & LLM Stream Unit Tests', () => {
     }
   });
 
+  test('runAgentLoop - "general_knowledge_answer" from the Communication Specialist answers directly and skips the Supervisor entirely', async () => {
+    // Guardrail against wasting a web search credit on stable, pre-2024 general knowledge
+    // (e.g. "what natural remedies repel spiders safely?") that the LLM already knows - the
+    // Communication Specialist should short-circuit straight to an answer instead of ever
+    // handing off to the Supervisor/web_searcher pipeline. NODE_ENV is flipped to exercise the
+    // production-only translation step, same as the "Approve Tasks" test above.
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const directAnswer = 'Great question! 🌸 Peppermint oil, vinegar, and diatomaceous earth are all natural, pet-safe spider deterrents.';
+      routerDecisions = [
+        {
+          thought: 'Stable general knowledge, answering directly.',
+          tool: 'none',
+          action: 'translate',
+          params: { requested_action: 'general_knowledge_answer', answer: directAnswer }
+        },
+        // Should never be consumed - proves the Supervisor turn never ran.
+        { thought: 'Should not run.', tool: 'none', action: '', params: {} }
+      ];
+
+      const contents = [];
+      await runAgentLoop({
+        db,
+        userId,
+        provider: 'local',
+        modelName: 'gemma',
+        supervisorModel: 'gemma',
+        userMessage: 'What natural remedies repel spiders while staying safe for pets?',
+        history: [],
+        onThought: jest.fn(),
+        onContent: (c) => contents.push(c),
+        onToolCall: jest.fn()
+      });
+
+      expect(contents.join('')).toBe(directAnswer);
+      expect(routerCallIndex).toBe(1);
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+  });
+
   test('callLocalLLMStream - handles custom URL patterns and endpoint failures', async () => {
     forceResponderError = true;
     routerDecisions = [
