@@ -392,6 +392,49 @@ select.form-control option {
   box-shadow: 0 0 8px var(--accent-primary);
 }
 
+/* Header stats: Tokens This Session | Web Search Credits | Current IP - fills the space
+   between the wordmark and the model badge, freed up by removing the broken logo image. */
+.header-stats-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.header-stat-badge {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-glass);
+  padding: 6px 10px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.header-stat-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-secondary);
+}
+
+.header-stat-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Below this, the header can't fit brand text + three stat badges + the model badge - hide the
+   stats first, same breakpoint where .patti-fullname already drops back to the compact logo. */
+@media (max-width: 991px) {
+  .header-stats-group {
+    display: none;
+  }
+}
+
 /* Chat Pane */
 .chat-pane {
   flex: 1;

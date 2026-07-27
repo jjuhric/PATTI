@@ -118,6 +118,27 @@ describe('Main App Component Tests', () => {
     expect(screen.getByText('App Chat One')).toBeInTheDocument();
   });
 
+  test('header brand has no broken logo image and shows the three stat badges', async () => {
+    // Must run before the "renders SetupWizard" test below, which overwrites global.fetch with
+    // an is_setup_complete: false mock and never restores it - this needs the real
+    // authenticated-workspace mock from the top of the file, still intact at this point.
+    let rendered;
+    await act(async () => {
+      rendered = render(<App />);
+    });
+
+    // Only the header's own logo image (header-patti-logo) was removed - the sidebar, auth
+    // screen, and chat pane each have their own separate, still-working "PATTI" logo image
+    // using the same underlying asset, and must be left alone.
+    expect(rendered.container.querySelector('.header-patti-logo')).toBeNull();
+
+    // The three new header stat badges (Tokens This Session, Web Search Credits, Current IP)
+    // render with their labels, filling the space the removed image left behind.
+    expect(screen.getByText('Tokens')).toBeInTheDocument();
+    expect(screen.getByText('Search')).toBeInTheDocument();
+    expect(screen.getByText('IP')).toBeInTheDocument();
+  });
+
   test('renders SetupWizard when setup is not complete', async () => {
     // Override fetch mock for this test
     const customFetch = vi.fn().mockImplementation((url) => {

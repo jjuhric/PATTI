@@ -186,6 +186,50 @@ describe('Token Usage API Router Tests', () => {
     expect(res365d.body.totalTokens).toBe(11100);
   });
 
+  test('GET /api/token-usage?since=<ISO> returns only tokens from that point on', async () => {
+    // 2 hours ago - before the "since" cutoff, must be excluded.
+    await mockTestDb.run(
+      "INSERT INTO token_usage (user_id, model_name, provider_type, token_count, created_at) VALUES (?, ?, ?, ?, datetime('now', '-2 hours'))",
+      [userId, 'qwen3-8b', 'online', 1000]
+    );
+    // Just now - after the cutoff, must be included.
+    await mockTestDb.run(
+      "INSERT INTO token_usage (user_id, model_name, provider_type, token_count, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+      [userId, 'qwen3-8b', 'local', 250]
+    );
+
+    const sinceIso = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5 minutes ago
+    const res = await request(app)
+      .get(`/api/token-usage?since=${encodeURIComponent(sinceIso)}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalTokens).toBe(250);
+    // The since path returns just the session total, not the table/graph breakdown.
+    expect(res.body.tableData).toBeUndefined();
+  });
+
+  test('GET /api/token-usage?since=<ISO> returns 0 when no usage since that point', async () => {
+    const sinceIso = new Date().toISOString();
+    const res = await request(app)
+      .get(`/api/token-usage?since=${encodeURIComponent(sinceIso)}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.totalTokens).toBe(0);
+  });
+
+  test('GET /api/token-usage?since=<invalid> returns 400', async () => {
+    const res = await request(app)
+      .get('/api/token-usage?since=not-a-date')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /api/token-usage?since= requires auth like every other timeframe', async () => {
+    const res = await request(app).get('/api/token-usage?since=2026-01-01T00:00:00.000Z');
+    expect(res.status).toBe(401);
+  });
+
   test('GET /api/token-usage handles DB error gracefully', async () => {
     mockDbError = true;
     const res = await request(app)

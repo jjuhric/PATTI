@@ -4,11 +4,29 @@ const { getDb } = require('../db');
 const { authenticateToken } = require('../middleware/auth');
 
 router.get('/', authenticateToken, async (req, res) => {
-  const { timeframe } = req.query;
+  const { timeframe, since } = req.query;
   const userId = req.user.id;
 
   try {
     const db = await getDb();
+
+    // Session-scoped total for the header stats display ("tokens since this tab was opened").
+    // Unlike `timeframe` (a fixed enum, safe to interpolate), `since` is client-supplied, so it
+    // is always bound as a parameter - never interpolated - and wrapped in SQLite's datetime()
+    // to normalize it against created_at's format rather than comparing raw strings, which
+    // would silently miscompare ISO8601's "T"/"Z" against SQLite's own "YYYY-MM-DD HH:MM:SS".
+    if (since) {
+      const sinceDate = new Date(since);
+      if (isNaN(sinceDate.getTime())) {
+        return res.status(400).json({ error: 'Invalid "since" timestamp.' });
+      }
+      const totalRow = await db.get(
+        'SELECT SUM(token_count) as total FROM token_usage WHERE user_id = ? AND created_at >= datetime(?)',
+        [userId, sinceDate.toISOString()]
+      );
+      return res.json({ totalTokens: totalRow?.total || 0 });
+    }
+
     let timeFilter = '';
     let isLastRequest = false;
 
