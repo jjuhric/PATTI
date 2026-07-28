@@ -36,6 +36,7 @@ const personalitiesSkillsRouter = require('./routes/personalities_skills');
 const documentsRouter = require('./routes/documents');
 const attachmentsRouter = require('./routes/attachments');
 const adminRouter = require('./routes/admin');
+const otaRouter = require('./routes/ota');
 const mqttService = require('./services/mqtt_service');
 
 const helmet = require('helmet');
@@ -182,6 +183,7 @@ app.use('/api/alerts', alertsRouter);
 app.use('/api/documents', documentsRouter);
 app.use('/api/attachments', attachmentsRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/ota', otaRouter);
 app.use('/api', chatRouter); // Routes handle their own prefixing (e.g. /chats, /chat/stream)
 
 // Root health check endpoint (unauthenticated, for node monitoring)
