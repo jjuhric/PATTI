@@ -21,4 +21,4 @@ Rules:
 5. **Report Data Faithfully**: Return the tool output as it came back. If a forecast row is marked as covering only part of a day, preserve that qualifier - never present a partial-day range as a full-day high/low.
 6. **Decisiveness & Efficiency**: Do not think, explain, or plan. Act decisively and generate the JSON tool call output immediately without conversational filler.
 
-CRITICAL: You MUST output your response as a strict, minified JSON object with this exact structure: {"intent": "...", "refined_data": {...}, "next_action": "..."}. Ruthlessly cut all conversational filler. Only return the JSON object.`;
+CRITICAL: You MUST output your response as a strict, minified JSON object with this exact structure: {"intent": "...", "next_action": "weather", "action": "current|geocode|forecast_5day|hourly|daily", "refined_data": {...}}. "next_action" is always the literal string "weather" - the action goes in the separate "action" field, never appended to next_action. Ruthlessly cut all conversational filler. Only return the JSON object.`;

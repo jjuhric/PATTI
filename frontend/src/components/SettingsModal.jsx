@@ -74,7 +74,41 @@ export default function SettingsModal({
           {/* Local LLM Settings Section */}
           <div style={{ padding: '16px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '12px', border: '1px solid var(--border-glass)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <h4 style={{ margin: 0, fontSize: '0.95rem', color: 'var(--accent-primary)', fontWeight: 600 }}>Local LLM Settings (Mandatory)</h4>
-            
+
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                onClick={() => setSettings(prev => ({
+                  ...prev,
+                  local_url: 'http://192.168.1.42:8000/v1',
+                  local_api_style: 'openai',
+                  model_name: 'Qwen3-14B-int4-ov',
+                  preferred_local_model: 'Qwen3-14B-int4-ov'
+                }))}
+                className="btn-secondary"
+                style={{ flex: 1, fontSize: '0.8rem', padding: '6px 10px' }}
+              >
+                Switch to NoLlama (Arc GPU)
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettings(prev => ({
+                  ...prev,
+                  local_url: 'http://192.168.1.42:1234/v1',
+                  local_api_style: 'openai',
+                  model_name: 'google/gemma-4-e4b',
+                  preferred_local_model: 'google/gemma-4-e4b'
+                }))}
+                className="btn-secondary"
+                style={{ flex: 1, fontSize: '0.8rem', padding: '6px 10px' }}
+              >
+                Switch to LM Studio
+              </button>
+            </div>
+            <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+              Fills in the fields below with each server's known address - click Save to apply. NoLlama runs as a background service and is always on; LM Studio must be open with the model loaded before switching to it.
+            </p>
+
             <div className="form-group" style={{ margin: 0 }}>
               <label>Local API Style</label>
               <select

@@ -20,7 +20,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const readline = require('readline');
-const { execSync, spawnSync } = require('child_process');
+const { execSync, spawn, spawnSync } = require('child_process');
 
 const ROOT = __dirname;
 const IS_WINDOWS = process.platform === 'win32';
@@ -275,8 +275,15 @@ Start-ScheduledTask -TaskName "${taskName}"
     return true;
   }
   logWarn(`Could not register scheduled task automatically (${result.output.trim()}). Starting directly in the background instead...`);
-  const child = spawnSync('wscript.exe', [vbsPath], { cwd: ROOT, detached: true, stdio: 'ignore' });
-  return child.error ? false : true;
+  // spawn, not spawnSync: the target is a long-running server that only exits on
+  // shutdown, and spawnSync blocks until its child exits regardless of `detached`.
+  try {
+    const child = spawn('wscript.exe', [vbsPath], { cwd: ROOT, detached: true, stdio: 'ignore' });
+    child.unref();
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 function registerLinuxService(role, startCmd) {
@@ -532,6 +539,7 @@ async function installHost(prompter, flags) {
   writeEnvVar('MQTT_NODE_ID', IS_WINDOWS ? 'windows-main' : os.hostname());
   ensureRandomSecret('JWT_SECRET');
   ensureRandomSecret('DB_ENCRYPTION_SECRET');
+  ensureRandomSecret('OTA_SECRET');
 
   if (!flags.skipUpdate) {
     log('Installing NPM dependencies (this might take a few minutes)...');
@@ -682,6 +690,7 @@ async function installClient(prompter, flags) {
   writeEnvVar('DB_PATH', readEnvVar('DB_PATH', 'backend/database.db'));
   ensureRandomSecret('JWT_SECRET');
   ensureRandomSecret('DB_ENCRYPTION_SECRET');
+  ensureRandomSecret('OTA_SECRET');
 
   if (!flags.skipUpdate) {
     log('Installing NPM dependencies (this might take a few minutes)...');

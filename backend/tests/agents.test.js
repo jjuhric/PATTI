@@ -692,6 +692,37 @@ describe('Multi-Agent System & Tools Tests', () => {
       global.fetch = globalFetch;
     });
 
+    test('runAgentTurn splits a dotted "tool.action" next_action into separate tool/action fields', async () => {
+      const globalFetch = global.fetch;
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ choices: [{ message: { content: JSON.stringify({
+          intent: 'get current weather', next_action: 'weather.current', refined_data: { zipcode: '32421' }
+        }) } }] })
+      });
+      const result = await runAgentTurn('weather_expert', 'system prompt', { provider: 'local', localApiStyle: 'lm-studio', localBaseUrl: 'http://lm-studio' }, 'hello', []);
+      expect(result.tool).toBe('weather');
+      expect(result.action).toBe('current');
+      expect(result.params).toEqual({ zipcode: '32421' });
+      global.fetch = globalFetch;
+    });
+
+    test('runAgentTurn leaves an explicit top-level action untouched even if tool contains a dot', async () => {
+      const globalFetch = global.fetch;
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ choices: [{ message: { content: JSON.stringify({
+          tool: 'dynamic.tool', action: 'run', params: {}
+        }) } }] })
+      });
+      const result = await runAgentTurn('supervisor', 'system prompt', { provider: 'local', localApiStyle: 'lm-studio', localBaseUrl: 'http://lm-studio' }, 'hello', []);
+      expect(result.tool).toBe('dynamic.tool');
+      expect(result.action).toBe('run');
+      global.fetch = globalFetch;
+    });
+
     test('runAgentTurn with gemini provider', async () => {
       const { GoogleGenerativeAI } = require('@google/generative-ai');
       const mockEmbed = {

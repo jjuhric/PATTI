@@ -5,6 +5,19 @@ const logger = require('./logger');
 const { llmFetchSignal } = require('./fetchTimeout');
 const { resolveTarget, resolveEndpoint, buildHeaders, buildBody, extractResponseText } = require('../llm/provider_config');
 
+// Some models fold "tool" + "action" into a single dotted string (e.g. "weather.current")
+// instead of the separate fields our prompts ask for - a convention they picked up from
+// other agentic training data. Normalize it here so tool dispatch doesn't depend on any one
+// model's naming habits.
+function splitDottedToolAction(parsed) {
+  if (parsed && typeof parsed.tool === 'string' && parsed.tool.includes('.') && !parsed.action) {
+    const dotIndex = parsed.tool.indexOf('.');
+    parsed.action = parsed.tool.slice(dotIndex + 1);
+    parsed.tool = parsed.tool.slice(0, dotIndex);
+  }
+  return parsed;
+}
+
 const AGENT_PROMPTS = new Proxy({}, {
   get(target, prop) {
     if (typeof prop === 'symbol') return target[prop];
@@ -194,7 +207,7 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
       parsed.params = parsed.refined_data || {};
       parsed.thought = parsed.intent || '';
     }
-    return parsed;
+    return splitDottedToolAction(parsed);
   } catch (err) {
     const firstBrace = respText.indexOf('{');
     const lastBrace = respText.lastIndexOf('}');
@@ -206,7 +219,7 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
           parsed.params = parsed.refined_data || {};
           parsed.thought = parsed.intent || '';
         }
-        return parsed;
+        return splitDottedToolAction(parsed);
       } catch (e) {}
     }
     console.warn(`Failed to parse agent JSON, falling back to none: ${respText}`);
