@@ -10,6 +10,13 @@ async function handleTtsTool(db, userId, action, params) {
     }
 
     try {
+      // Voice Mode is the single, persisted gate for all TTS generation - the agent must
+      // never speak on its own initiative when the user hasn't turned it on.
+      const voiceSettings = await db.get('SELECT voice_mode FROM user_settings WHERE user_id = ?', [userId]);
+      if (!voiceSettings || !voiceSettings.voice_mode) {
+        return 'Voice Mode is currently turned off, so no audio was generated. Let the user know they can turn on Voice Mode (the speaker icon in the chat header) if they want spoken responses.';
+      }
+
       let spokenText = text;
       try {
         const settings = await buildSettingsForUser(db, userId);

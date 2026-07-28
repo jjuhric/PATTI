@@ -116,6 +116,10 @@ export default function ChatPane({
     }
   };
 
+  // Voice Mode is persisted server-side (user_settings.voice_mode) - that's the single source
+  // of truth the backend also checks before ever generating TTS. localStorage is kept only as
+  // an instant local cache so the button doesn't flash "muted" for the moment before the real
+  // settings finish loading; it's overwritten as soon as the server value arrives below.
   const [voiceEnabled, setVoiceEnabled] = useState(() => {
     try {
       if (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function') {
@@ -134,6 +138,27 @@ export default function ChatPane({
       }
     } catch (e) {}
   }, [voiceEnabled]);
+
+  // Hydrate from the server-persisted setting once it loads - overrides the localStorage guess
+  // with the real, cross-device value.
+  useEffect(() => {
+    if (settings && (settings.voice_mode === 0 || settings.voice_mode === 1 || typeof settings.voice_mode === 'boolean')) {
+      setVoiceEnabled(settings.voice_mode === 1 || settings.voice_mode === true);
+    }
+  }, [settings?.voice_mode]);
+
+  const toggleVoiceEnabled = () => {
+    const next = !voiceEnabled;
+    setVoiceEnabled(next);
+    fetch('/api/settings/voice-mode', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ enabled: next })
+    }).catch(err => console.error('Failed to persist Voice Mode setting:', err));
+  };
 
   // Clean up audio on unmount
   useEffect(() => {
@@ -279,7 +304,7 @@ export default function ChatPane({
           zIndex: 10
         }}>
           <button
-            onClick={() => setVoiceEnabled(!voiceEnabled)}
+            onClick={toggleVoiceEnabled}
             className="btn-icon"
             title={voiceEnabled ? "Mute Voice Response" : "Unmute Voice Response"}
             style={{

@@ -136,6 +136,9 @@ async function getDb() {
     if (!settingsColumns.some(col => col.name === 'google_home_name')) {
       await dbConnection.run("ALTER TABLE user_settings ADD COLUMN google_home_name TEXT");
     }
+    if (!settingsColumns.some(col => col.name === 'voice_mode')) {
+      await dbConnection.run("ALTER TABLE user_settings ADD COLUMN voice_mode INTEGER DEFAULT 0");
+    }
 
     // Migrate memories to add embedding column if missing
     const memoriesColumns = await dbConnection.all('PRAGMA table_info(memories)');

@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   google_home_enabled INTEGER DEFAULT 0,
   google_home_ip TEXT,
   google_home_name TEXT,
+  voice_mode INTEGER DEFAULT 0, -- master gate: TTS is only ever generated when this is 1
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
