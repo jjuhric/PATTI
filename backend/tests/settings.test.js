@@ -420,6 +420,59 @@ describe('Settings Router Tests', () => {
     expect(res.body).toBeDefined();
   });
 
+  test('PUT /api/settings/voice-mode - enables and disables without touching other settings fields', async () => {
+    // Regression guard: the main PUT / is a full-object upsert where several fields overwrite
+    // unconditionally rather than COALESCE-ing, so this route must do a targeted UPDATE instead
+    // of reusing that handler, or toggling Voice Mode would silently reset provider/model/keys.
+    const before = await request(app).get('/api/settings').set('Authorization', `Bearer ${token}`);
+    const providerBefore = before.body.provider;
+
+    let res = await request(app)
+      .put('/api/settings/voice-mode')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ enabled: true });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ success: true, voice_mode: true });
+
+    let getRes = await request(app).get('/api/settings').set('Authorization', `Bearer ${token}`);
+    expect(getRes.body.voice_mode).toBe(1);
+    expect(getRes.body.provider).toBe(providerBefore);
+
+    res = await request(app)
+      .put('/api/settings/voice-mode')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ enabled: false });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ success: true, voice_mode: false });
+
+    getRes = await request(app).get('/api/settings').set('Authorization', `Bearer ${token}`);
+    expect(getRes.body.voice_mode).toBe(0);
+  });
+
+  test('PUT /api/settings/voice-mode - creates a settings row for a user with none yet', async () => {
+    const fresh = await mockTestDb.run("INSERT INTO users (username, password_hash) VALUES ('novoiceuser', 'hashed')");
+    const freshToken = jwt.sign({ id: fresh.lastID, username: 'novoiceuser' }, JWT_SECRET);
+
+    const res = await request(app)
+      .put('/api/settings/voice-mode')
+      .set('Authorization', `Bearer ${freshToken}`)
+      .send({ enabled: true });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ success: true, voice_mode: true });
+
+    const row = await mockTestDb.get('SELECT voice_mode FROM user_settings WHERE user_id = ?', [fresh.lastID]);
+    expect(row.voice_mode).toBe(1);
+  });
+
+  test('PUT /api/settings/voice-mode - database failure returns 500', async () => {
+    mockDbError = true;
+    const res = await request(app)
+      .put('/api/settings/voice-mode')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ enabled: true });
+    expect(res.statusCode).toBe(500);
+  });
+
   test('error paths - database failure catches', async () => {
     mockDbError = true;
 

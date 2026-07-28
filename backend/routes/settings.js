@@ -168,6 +168,26 @@ router.put('/', authenticateToken, async (req, res) => {
   }
 });
 
+// Narrow, single-field update so toggling Voice Mode from the chat header can't accidentally
+// clobber the rest of the settings row - the main PUT / above is a full-object upsert where
+// several fields (provider, model_name, keys, google_home_*) overwrite unconditionally rather
+// than COALESCE-ing, so a partial body sent there would silently reset them to defaults.
+router.put('/voice-mode', authenticateToken, async (req, res) => {
+  const enabled = req.body?.enabled ? 1 : 0;
+  try {
+    const db = await getDb();
+    const existing = await db.get('SELECT user_id FROM user_settings WHERE user_id = ?', [req.user.id]);
+    if (existing) {
+      await db.run('UPDATE user_settings SET voice_mode = ? WHERE user_id = ?', [enabled, req.user.id]);
+    } else {
+      await db.run('INSERT INTO user_settings (user_id, voice_mode) VALUES (?, ?)', [req.user.id, enabled]);
+    }
+    res.json({ success: true, voice_mode: enabled === 1 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Scan local network for Google Nest/Home speakers using node-dns-sd
 router.get('/google-home/scan', authenticateToken, async (req, res) => {
   try {

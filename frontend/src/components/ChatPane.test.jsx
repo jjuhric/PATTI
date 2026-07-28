@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import ChatPane from './ChatPane';
 
@@ -275,5 +275,41 @@ describe('ChatPane Component Tests', () => {
     expect(linkElement.getAttribute('href')).toBe('https://google.com');
     expect(linkElement.getAttribute('target')).toBe('_blank');
     expect(linkElement.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  describe('Voice Mode', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    test('defaults to muted with no settings or localStorage value', () => {
+      render(<ChatPane {...defaultProps} />);
+      expect(screen.getByText('Voice: Muted')).toBeInTheDocument();
+      expect(screen.getByTitle('Unmute Voice Response')).toBeInTheDocument();
+    });
+
+    test('hydrates from settings.voice_mode once the real setting loads', () => {
+      const { rerender } = render(<ChatPane {...defaultProps} settings={{}} />);
+      expect(screen.getByText('Voice: Muted')).toBeInTheDocument();
+
+      rerender(<ChatPane {...defaultProps} settings={{ voice_mode: 1 }} />);
+      expect(screen.getByText('Voice: Enabled')).toBeInTheDocument();
+    });
+
+    test('clicking the toggle persists the new value to /api/settings/voice-mode', () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
+      vi.stubGlobal('fetch', mockFetch);
+
+      render(<ChatPane {...defaultProps} token="test-token" settings={{ voice_mode: 0 }} />);
+      const toggleBtn = screen.getByTitle('Unmute Voice Response');
+      fireEvent.click(toggleBtn);
+
+      expect(screen.getByText('Voice: Enabled')).toBeInTheDocument();
+      expect(mockFetch).toHaveBeenCalledWith('/api/settings/voice-mode', expect.objectContaining({
+        method: 'PUT',
+        headers: expect.objectContaining({ Authorization: 'Bearer test-token' }),
+        body: JSON.stringify({ enabled: true })
+      }));
+    });
   });
 });

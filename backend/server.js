@@ -250,9 +250,16 @@ app.post('/api/tts', authenticateToken, async (req, res) => {
     if (!text) {
       return res.status(400).json({ error: 'Text is required for TTS' });
     }
+    const db = await getDb();
+    // Server-side enforcement, not just trusting the frontend to only call this when its own
+    // Voice Mode toggle is on - Voice Mode is now the single, persisted gate for all TTS.
+    const voiceSettings = await db.get('SELECT voice_mode FROM user_settings WHERE user_id = ?', [req.user.id]);
+    if (!voiceSettings || !voiceSettings.voice_mode) {
+      return res.status(403).json({ error: 'Voice Mode is turned off.' });
+    }
     let spokenText = text;
     try {
-      const settings = await buildSettingsForUser(await getDb(), req.user.id);
+      const settings = await buildSettingsForUser(db, req.user.id);
       spokenText = await narrateForSpeech(settings, text);
     } catch (err) {
       logger.warn('TTS narration step skipped, speaking raw text:', err.message);
