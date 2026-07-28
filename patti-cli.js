@@ -532,6 +532,7 @@ async function installHost(prompter, flags) {
   writeEnvVar('MQTT_NODE_ID', IS_WINDOWS ? 'windows-main' : os.hostname());
   ensureRandomSecret('JWT_SECRET');
   ensureRandomSecret('DB_ENCRYPTION_SECRET');
+  ensureRandomSecret('OTA_SECRET');
 
   if (!flags.skipUpdate) {
     log('Installing NPM dependencies (this might take a few minutes)...');
@@ -682,6 +683,7 @@ async function installClient(prompter, flags) {
   writeEnvVar('DB_PATH', readEnvVar('DB_PATH', 'backend/database.db'));
   ensureRandomSecret('JWT_SECRET');
   ensureRandomSecret('DB_ENCRYPTION_SECRET');
+  ensureRandomSecret('OTA_SECRET');
 
   if (!flags.skipUpdate) {
     log('Installing NPM dependencies (this might take a few minutes)...');
