@@ -26,10 +26,10 @@ const {
 // feedback learning (storing what worked, for future routing) already happens independently
 // upstream in routes/chat.js's handleUserFeedback call - this only short-circuits the reply.
 const ACKNOWLEDGMENT_RESPONSES = [
-  "Aww, thank you so much! 💖 I'm always happy to help - just let me know if you need anything else! ✨",
-  "You're so welcome! 😊 That means a lot - I'm here anytime you need me! 🌸",
-  "Thank you for the kind words! ✨ Let me know whenever you need anything else! 💖",
-  "So glad that worked out for you! 🎉 I'm always here if you need more help! 😊"
+  "You're welcome - let me know if you need anything else.",
+  "Glad that helped. I'm here if you need anything else.",
+  "Thanks for letting me know - I'm here if you need anything else.",
+  "Glad it worked out. Just let me know if you need more help."
 ];
 
 // Run the agent loop
@@ -376,7 +376,7 @@ async function runAgentLoop({
 - The user requested: "${userMessage}".
 - The Google Home device tool returned this execution result:
 ${toolOutput}
-- Present a warm, bubbly, and user-friendly final response formatting this result. Format in beautiful markdown with emojis. Let the user know the command succeeded or explain the failure.`;
+- Present a clear, professional final response formatting this result. Format in clean markdown, with an emoji only if it's topically relevant. Let the user know the command succeeded or explain the failure.`;
 
     const isGemini = provider === 'gemini' || (provider === 'online' && onlineProvider === 'gemini');
 
@@ -601,7 +601,7 @@ ${toolOutput}
 - The ${isAgentInfo ? 'System Specialist' : 'Memory Agent'} returned this context:
 ${toolOutput}
 ${profileDetailsText ? `Here is the user profile details context:\n${profileDetailsText}` : ''}
-- Present a warm, bubbly, and user-friendly final response presenting this information. Format in beautiful markdown with tables, emojis, and visual progress bars where appropriate.`;
+- Present a clear, professional final response presenting this information. Format in clean markdown with tables and visual progress bars where appropriate, and an emoji only where topically relevant.`;
 
     const isGemini = provider === 'gemini' || (provider === 'online' && onlineProvider === 'gemini');
 
@@ -673,6 +673,13 @@ ${profileDetailsText ? `Here is the user profile details context:\n${profileDeta
   let toolCallsCount = 0;
   const maxToolCalls = 10;
   const seenToolCalls = new Set();
+  // Groups this user turn's decomposed sub-task results in the subtask_results
+  // scratchpad table - each delegation's full output is persisted there immediately
+  // and only a short pointer is kept in currentHistory/systemPrompt context, so a
+  // multi-part request (e.g. weather + sports + movies) doesn't drag every prior
+  // part's full payload back through the Supervisor's reasoning on later turns.
+  // Rows are deleted once the final response is synthesized (see finally block below).
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   // Intercept chat-based approvals for code execution
   const lastAssistantMsg = [...rawRecentHistory].reverse().find(msg => msg.role === 'assistant');
@@ -880,18 +887,24 @@ If no changes are required and you can proceed without executing the code, then 
           return;
         }
         if (commTurn.params.requested_action === 'clarification_needed') {
-          // Deterministic guard: read-only info lookups (sports, weather, news)
-          // never need HITL approval, but the local model sometimes asks anyway
-          // when the request has multiple parts. Override and route directly -
-          // unless the message contains mutation verbs, in which case the HITL
-          // confirmation must stand (never bypass approval for write actions).
-          const mentionsMutation = /\b(delete|remove|create|add|cancel|update|modify|run|execute|write|install|restart|schedule a|set up)\b/i.test(userMessage);
-          const readOnlyLookup = !mentionsMutation && /\b(score|scores|game|games|schedule|watch|sports|weather|forecast|news|headlines)\b/i.test(userMessage);
+          // Deterministic guard: read-only info lookups (sports, weather, news, movies,
+          // document/memory recall) never need HITL approval, but the local model
+          // sometimes asks anyway when the request has multiple parts (e.g. weather +
+          // sports + movies in one message). Override and route directly - unless the
+          // message mentions a genuinely damaging/irreversible action, in which case the
+          // HITL confirmation must stand. Ordinary requested mutations (add/delete a
+          // calendar event, remember/forget a fact, write a file the user asked for) are
+          // NOT held here - only real system/data-damage risk should ever pause for approval.
+          const mentionsSystemDamage = /\b(rm -rf|del \/s|format [a-z]:|drop database|drop table|factory reset|wipe (the )?(drive|disk|system)|disable (firewall|antivirus|security)|delete (all|everything)|sudo rm)\b/i.test(userMessage);
+          const readOnlyLookup = !mentionsSystemDamage && /\b(score|scores|game|games|schedule|watch|sports|weather|forecast|news|headlines|movie|movies|film|films|tv show|tv shows|streaming|what'?s new|remember|recall|memory|memories|document|documents|vault|notes)\b/i.test(userMessage);
           if (readOnlyLookup) {
             onThought('[System] Clarification skipped: read-only lookup detected. Routing directly to Supervisor.\n');
             projectIdea = JSON.stringify({
               requested_action: /\b(score|scores|game|games|schedule|watch|team|teams)\b/i.test(userMessage) ? 'sports'
-                : (/\b(weather|forecast|temperature)\b/i.test(userMessage) ? 'weather' : 'news'),
+                : (/\b(weather|forecast|temperature)\b/i.test(userMessage) ? 'weather'
+                : (/\b(movie|movies|film|films|tv show|tv shows|streaming)\b/i.test(userMessage) ? 'movies'
+                : (/\b(remember|recall|memory|memories)\b/i.test(userMessage) ? 'memory'
+                : (/\b(document|documents|vault|notes)\b/i.test(userMessage) ? 'document_vault' : 'news')))),
               data_needed: userMessage
             });
           } else {
@@ -916,6 +929,7 @@ If no changes are required and you can proceed without executing the code, then 
     }
   }
 
+  try {
   while (toolCallsCount < maxToolCalls) {
     if (abortSignal?.aborted || (isAborted && isAborted())) {
       onThought("Stream aborted by user.\n");
@@ -1003,10 +1017,13 @@ If no changes are required and you can proceed without executing the code, then 
     onToolCall({ tool: decision.tool, action: decision.action || 'delegate', params: decision.params });
 
     let toolOutput = '';
+    let delegatedAgentName = null;
+    let taskLabelForStore = null;
 
     // Check for delegation
     if (decision.tool.startsWith('delegate_to_') && decision.tool !== 'delegate_to_remote_node') {
       const agentName = decision.tool.replace('delegate_to_', '');
+      delegatedAgentName = agentName;
 
       if (agentName === 'ask_communication_expert') {
         const commSpecialistSystemPrompt = require('../utils/agents/communication_specialist');
@@ -1070,6 +1087,7 @@ If no changes are required and you can proceed without executing the code, then 
       }
 
       const subTask = JSON.stringify(subTaskObj);
+      taskLabelForStore = subTaskObj.task || subTaskObj.query || subTaskObj.team || subTaskObj.topic || agentName;
 
       onThought(`Delegating sub-task to Agent "${agentName}": "${subTask}"...\n`);
       if (onAgentStatus) onAgentStatus({ agent: agentName, status: 'active' });
@@ -1183,7 +1201,9 @@ If no changes are required and you can proceed without executing the code, then 
       }
     }
 
-    let safeResult = typeof toolOutput === 'string' ? toolOutput : JSON.stringify(toolOutput);
+    const fullToolOutput = typeof toolOutput === 'string' ? toolOutput : JSON.stringify(toolOutput);
+
+    let safeResult = fullToolOutput;
     const limit = decision.tool === 'delegate_to_news_agent' ? 25000 : 3000;
     if (safeResult.length > limit) {
       safeResult = safeResult.substring(0, limit) + "\n... [TRUNCATED: Response too large for context]";
@@ -1197,13 +1217,27 @@ If no changes are required and you can proceed without executing the code, then 
       output: toolOutput
     });
 
+    // Persist the FULL, untruncated result to the sub-task scratchpad table rather
+    // than replaying it through the Supervisor's own context on every later turn.
+    // Only a short preview goes into currentHistory below - the full text is
+    // reassembled from the DB once, at final synthesis time (see dataBlock below).
+    const isErrorResult = fullToolOutput.includes('"status":"error"') || fullToolOutput.includes('delegation failed') || fullToolOutput.startsWith('Error:');
+    try {
+      await db.run(
+        'INSERT INTO subtask_results (chat_id, request_id, agent_name, task_label, result_text, status) VALUES (?, ?, ?, ?, ?, ?)',
+        [chatId, requestId, delegatedAgentName || decision.tool, taskLabelForStore || decision.action || decision.tool, fullToolOutput, isErrorResult ? 'error' : 'done']
+      );
+    } catch (dbErr) {
+      console.error('Failed to persist subtask result to scratchpad:', dbErr);
+    }
+
     currentHistory.push({
       role: 'assistant',
       content: `Thought: ${decision.thought}\nCalling tool: ${decision.tool} with parameters: ${JSON.stringify(decision.params)}`
     });
     currentHistory.push({
       role: 'user',
-      content: `[Output for ${decision.tool}]:\n${toolOutput}`
+      content: `[${decision.tool}] completed - full result saved to the task scratchpad, not repeated here. Preview: ${fullToolOutput.slice(0, 150)}${fullToolOutput.length > 150 ? '...' : ''}`
     });
 
     toolCallsCount++;
@@ -1227,7 +1261,7 @@ Formulate a rich, helpful final response. Format in beautiful markdown. Fully su
 Make sure to answer the user query directly and clearly.`;
   } else {
     if (onAgentStatus) onAgentStatus({ agent: 'communication_specialist', status: 'active' });
-    onThought('Communication Specialist generating bubbly final response...\n');
+    onThought('Communication Specialist generating final response...\n');
     const commSpecialistSystemPrompt = require('../utils/agents/communication_specialist');
     const mode2SystemPrompt = commSpecialistSystemPrompt.replace(/<!-- START MODE 1 -->[\s\S]*?<!-- END MODE 1 -->/g, '');
     let currentTimeContext = '';
@@ -1242,10 +1276,27 @@ Make sure to answer the user query directly and clearly.`;
     // step-by-step can otherwise talk itself into claiming results are missing even when they
     // were included further down the prompt (observed: a successful weather_expert result was
     // in this exact prompt, but the model still answered "could you remind me of your zipcode?").
-    const hasResults = accumulatedToolOutputs.length > 0;
-    const dataBlock = hasResults
-      ? `DATA_AVAILABLE: yes\n${accumulatedToolOutputs.map(t => `--- [Source: ${t.tool}] ---\n${t.output}`).join('\n\n')}`
-      : 'DATA_AVAILABLE: no';
+    // Reassemble the FULL combined results from the sub-task scratchpad (not the
+    // truncated/preview text that flowed through the Supervisor's own reasoning
+    // turns) - this is the one point synthesis legitimately needs everything at once
+    // to decide how best to present the combined answer.
+    let hasResults = accumulatedToolOutputs.length > 0;
+    let dataBlock = 'DATA_AVAILABLE: no';
+    try {
+      const subtaskRows = await db.all(
+        'SELECT agent_name, task_label, result_text, status FROM subtask_results WHERE request_id = ? ORDER BY id',
+        [requestId]
+      );
+      if (subtaskRows && subtaskRows.length > 0) {
+        hasResults = true;
+        dataBlock = `DATA_AVAILABLE: yes\n${subtaskRows.map(r => `--- [Source: ${r.agent_name}${r.task_label ? ` - ${r.task_label}` : ''}${r.status === 'error' ? ' - ERRORED' : ''}] ---\n${r.result_text}`).join('\n\n')}`;
+      }
+    } catch (dbErr) {
+      console.error('Failed to load subtask scratchpad for synthesis, falling back to in-memory results:', dbErr);
+      if (hasResults) {
+        dataBlock = `DATA_AVAILABLE: yes\n${accumulatedToolOutputs.map(t => `--- [Source: ${t.tool}] ---\n${t.output}`).join('\n\n')}`;
+      }
+    }
 
     responderInstruction = `### DATA (this is 100% of the information available - there is no more coming):
 ${dataBlock}
@@ -1259,7 +1310,7 @@ ${mode2SystemPrompt}${activePersonalityPrompt}
   - If DATA_AVAILABLE is "yes": the content below it is real, already-gathered results. Use it directly to answer. Do NOT claim the information is missing, unavailable, or still being gathered. Do NOT ask the user for details (like a zipcode or a name) that already appear in the DATA above - if it's there, use it.
   - If DATA_AVAILABLE is "no": no data was gathered. Say so plainly instead of fabricating a status update. Never describe an action as "in progress", "being processed", "underway", or "will be provided shortly".
 - If you need to reason before answering, wrap ALL of it inside <think> and </think> tags with nothing else outside those tags besides your final answer - for example: <think>your thoughts here</think>your final response here. Do NOT narrate your reasoning, rules, self-doubt, or operating mode outside the <think> tags (no "wait", "let me reconsider", "self-correction", or similar visible in the response) - the visible response must begin immediately with the real answer to the user, never with a description of what you are about to do. Keep any reasoning brief and decisive - do not go back and forth.
-- Present a warm, bubbly, and welcoming final response containing ALL relevant details from the DATA above.
+- Present a clear, well-organized, professional final response containing ALL relevant details from the DATA above. Use images (markdown \`![alt](url)\`) or a \`\`\`mermaid diagram where they genuinely help; use an emoji only when it's topically relevant to the content, never as decoration.
 - Here is the user request: "${userMessage}".
 - Project Idea that was executed: "${projectIdea}"
 ${currentTimeContext ? `\n### Current System Time Context:\n${currentTimeContext}\n` : ''}`;
@@ -1317,6 +1368,15 @@ ${currentTimeContext ? `\n### Current System Time Context:\n${currentTimeContext
       userId,
       provider
     );
+  }
+  } finally {
+    // The scratchpad is pure per-turn working memory, not conversation history
+    // (that's the messages table) - clear it out now that synthesis is done.
+    if (db && typeof db.run === 'function') {
+      try {
+        Promise.resolve(db.run('DELETE FROM subtask_results WHERE request_id = ?', [requestId])).catch(() => {});
+      } catch (cleanupErr) { /* best-effort scratchpad cleanup */ }
+    }
   }
 }
 

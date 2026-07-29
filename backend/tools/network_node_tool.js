@@ -98,20 +98,17 @@ async function handleRemoteNodeBridge(params, options = {}) {
     // If the action is a shell command requiring sudo, check for sudo password approval locally
     if (action === 'run_command' && cmdParams.command && cmdParams.command.includes('sudo') && !cmdParams.sudo_password) {
       if (options.onCommandApprovalRequired) {
-        const commandId = 'cmd_' + Math.random().toString(36).substring(2, 15);
-        options.onCommandApprovalRequired({
-          commandId,
+        const { requestApproval } = require('../utils/commandApproval');
+        const approvalResult = await requestApproval(options.onCommandApprovalRequired, {
           command: cmdParams.command,
           safety_analysis: {
             risk_level: 'medium',
             reason: `Execute administrative command on remote node "${node.node_name}"`,
             potential_harm: 'Unauthorized system modifications on remote node',
             recommendation: 'review_carefully'
-          }
+          },
+          userId: options.userId
         });
-
-        const { registerPendingCommand } = require('../utils/commandApproval');
-        const approvalResult = await registerPendingCommand(commandId, cmdParams.command, options.userId);
         if (!approvalResult.approved) {
           return `Command execution rejected by user.`;
         }

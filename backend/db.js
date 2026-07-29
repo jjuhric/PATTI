@@ -214,6 +214,16 @@ async function getDb() {
       )
     `);
 
+    // Sweep orphaned subtask_results rows. These are per-request scratchpad entries that
+    // runAgentLoop deletes itself in a finally block once a turn's response is synthesized
+    // (see backend/services/agent_loop.js) - a row only survives to server restart if the
+    // process was killed mid-request. Harmless clutter otherwise, but no reason to keep it.
+    try {
+      await dbConnection.run("DELETE FROM subtask_results WHERE created_at < datetime('now', '-1 day')");
+    } catch (err) {
+      logger.error('Failed to sweep orphaned subtask_results rows on boot:', err);
+    }
+
     // Seed default custom personality and skills if empty
     try {
       const personalityCountRow = await dbConnection.get('SELECT COUNT(*) as count FROM custom_personalities');
@@ -223,9 +233,23 @@ async function getDb() {
           VALUES (?, ?, ?, ?)
         `, [
           'Friendly Secretary',
-          'A bubbly, warm, polite, and well-organized secretary persona.',
-          'You are a friendly, secretary-like assistant. Speak articulately and politely, break down problems into individual tasks, and check with the user before proceeding.',
+          'A clear, professional, well-organized assistant persona.',
+          'You are a clear, professional, well-organized assistant. Speak directly and articulately, break problems down into individual tasks, and proceed using your best judgment and the recommended approach - only pause to check with the user first if the task could genuinely and irreversibly damage the system or its data.',
           1
+        ]);
+      } else {
+        // Migration: the default personality used to mandate a "bubbly" tone and asking
+        // for confirmation before any multi-step task. Update it in place for existing
+        // installs, but only if it still has the exact original text - never overwrite
+        // a personality the user has since customized themselves.
+        await dbConnection.run(`
+          UPDATE custom_personalities
+          SET description = ?, system_prompt = ?
+          WHERE name = 'Friendly Secretary'
+            AND system_prompt = 'You are a friendly, secretary-like assistant. Speak articulately and politely, break down problems into individual tasks, and check with the user before proceeding.'
+        `, [
+          'A clear, professional, well-organized assistant persona.',
+          'You are a clear, professional, well-organized assistant. Speak directly and articulately, break problems down into individual tasks, and proceed using your best judgment and the recommended approach - only pause to check with the user first if the task could genuinely and irreversibly damage the system or its data.'
         ]);
       }
 

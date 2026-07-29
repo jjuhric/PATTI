@@ -25,6 +25,12 @@ jest.mock('../tools/web_search_tool', () => ({ handleWebSearchTool: jest.fn(() =
 jest.mock('../tools/google_news_tool', () => ({ handleGoogleNewsTool: jest.fn(() => 'news-ok') }));
 jest.mock('../tools/memory_tool', () => ({ handleMemoryTool: jest.fn(() => 'memory-ok') }));
 jest.mock('../tools/vault_tool', () => ({ handleVaultTool: jest.fn(() => 'vault-ok') }));
+jest.mock('../tools/network_node_tool', () => ({ handleNetworkNodeTool: jest.fn(() => 'remote-node-ok') }));
+// commandApproval is intentionally NOT mocked here - requestApproval() and
+// registerPendingCommand() live in the same module and registerPendingCommand is called
+// via a direct in-module reference, so mocking just one of them wouldn't actually
+// intercept the other's internal call. Instead, tests resolve the real pending promise
+// via resolveCommand(), exactly like coder_tools_approval.test.js does.
 
 const originalFetch = global.fetch;
 
@@ -408,7 +414,12 @@ describe('Agents Coverage Extender Tests', () => {
   test('runWorkerAgent new options: status streaming, command approval, prompt interception', async () => {
     const onIntermediateStatusUpdate = jest.fn();
     const onStatusUpdate = jest.fn();
-    const onCommandApprovalRequired = jest.fn().mockResolvedValue(true);
+    const { resolveCommand } = require('../utils/commandApproval');
+    const onCommandApprovalRequired = jest.fn((evt) => {
+      // Simulates the real /approve-command REST round-trip resolving the pending
+      // promise requestApproval() is awaiting inside agents.js.
+      setTimeout(() => resolveCommand(evt.commandId, true), 0);
+    });
     const onPromptHumanInterception = jest.fn().mockResolvedValue('user context info');
 
     const settings = {
@@ -424,22 +435,26 @@ describe('Agents Coverage Extender Tests', () => {
     global.fetch = jest.fn().mockImplementation(async () => {
       fetchCalls++;
       if (fetchCalls === 1) {
-        // Mutation action to trigger onCommandApprovalRequired
+        // Remote node mutation action to trigger onCommandApprovalRequired - this is the
+        // one mutation type that still gets a real human approval gate (see agents.js);
+        // write_file/execute_command already have their own narrower, risk-based audit
+        // and are exercised separately below without triggering this blanket gate.
+        return {
+          ok: true,
+          headers: { get: () => 'application/json' },
+          json: async () => ({
+            choices: [{ message: { content: JSON.stringify({ tool: 'remote_node_bridge', action: 'write_file', params: { filePath: 't.txt', content: 'test' } }) } }]
+          })
+        };
+      }
+      if (fetchCalls === 2) {
+        // write_file itself - handleCoderTool is mocked below to return
+        // INPUT_REQUIRED_FROM_USER, which should trigger onPromptHumanInterception
         return {
           ok: true,
           headers: { get: () => 'application/json' },
           json: async () => ({
             choices: [{ message: { content: JSON.stringify({ tool: 'write_file', action: 'write', params: { filePath: 't.txt', content: 'test' } }) } }]
-          })
-        };
-      }
-      if (fetchCalls === 2) {
-        // Return output with INPUT_REQUIRED_FROM_USER to trigger onPromptHumanInterception
-        return {
-          ok: true,
-          headers: { get: () => 'application/json' },
-          json: async () => ({
-            choices: [{ message: { content: JSON.stringify({ tool: 'weather', action: 'get', params: { zipcode: '123' } }) } }]
           })
         };
       }
@@ -464,7 +479,11 @@ describe('Agents Coverage Extender Tests', () => {
   });
 
   test('runWorkerAgent mutation action rejected path', async () => {
-    const onCommandApprovalRequired = jest.fn().mockResolvedValue(false);
+    const { resolveCommand } = require('../utils/commandApproval');
+    const onCommandApprovalRequired = jest.fn((evt) => {
+      setTimeout(() => resolveCommand(evt.commandId, false), 0);
+    });
+
     const settings = {
       provider: 'openai',
       model_name: 'gpt-4',
@@ -475,13 +494,54 @@ describe('Agents Coverage Extender Tests', () => {
       ok: true,
       headers: { get: () => 'application/json' },
       json: async () => ({
-        choices: [{ message: { content: JSON.stringify({ tool: 'write_file', action: 'write', params: { filePath: 't.txt', content: 'test' } }) } }]
+        choices: [{ message: { content: JSON.stringify({ tool: 'remote_node_bridge', action: 'write_file', params: { filePath: 't.txt', content: 'test' } }) } }]
       })
     });
 
     const result = await runWorkerAgent('coder', settings, 'Write file', {}, 1);
     expect(result).toContain('Pipeline Interrupted');
     expect(onCommandApprovalRequired).toHaveBeenCalled();
+  });
+
+  test('runWorkerAgent write_file/execute_command proceed without a blanket approval gate', async () => {
+    // write_file and execute_command are deliberately NOT gated by the blanket
+    // onCommandApprovalRequired check anymore - handleCoderTool runs its own narrower,
+    // risk-based QA+Supervisor audit instead (see codeVerifier.js).
+    const onCommandApprovalRequired = jest.fn();
+
+    const settings = {
+      provider: 'openai',
+      model_name: 'gpt-4',
+      onCommandApprovalRequired
+    };
+
+    let fetchCalls = 0;
+    global.fetch = jest.fn().mockImplementation(async () => {
+      fetchCalls++;
+      if (fetchCalls === 1) {
+        return {
+          ok: true,
+          headers: { get: () => 'application/json' },
+          json: async () => ({
+            choices: [{ message: { content: JSON.stringify({ tool: 'write_file', action: 'write', params: { filePath: 't.txt', content: 'test' } }) } }]
+          })
+        };
+      }
+      return {
+        ok: true,
+        headers: { get: () => 'application/json' },
+        json: async () => ({
+          choices: [{ message: { content: JSON.stringify({ tool: 'none' }) } }]
+        })
+      };
+    });
+
+    const mockCoder = require('../tools/coder_tools');
+    mockCoder.handleCoderTool.mockResolvedValueOnce('File written successfully.');
+
+    const result = await runWorkerAgent('coder', settings, 'Write file', {}, 1);
+    expect(result).toBeDefined();
+    expect(onCommandApprovalRequired).not.toHaveBeenCalled();
   });
 
   test('runWorkerAgent and runAgentResponse with gemini provider', async () => {

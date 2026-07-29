@@ -36,8 +36,36 @@ function resolveCommand(commandId, approved, editedCommand, password) {
   return true;
 }
 
+function generateCommandId() {
+  return 'cmd_' + Math.random().toString(36).substring(2, 15);
+}
+
+/**
+ * Notifies the caller-supplied approval callback (if any) and waits for the user's
+ * real decision, resolved later via the /approve-command REST endpoint calling
+ * resolveCommand() with a matching commandId. Consolidates the commandId + notify +
+ * registerPendingCommand pattern that used to be duplicated across coder_tools.js,
+ * network_node_tool.js, and agents.js.
+ *
+ * @param {Function|undefined} onCommandApprovalRequired Fires a { commandId, command,
+ *   safety_analysis } event (e.g. over SSE) to notify the user a decision is needed.
+ *   If not provided, no gate is configured - approves automatically.
+ * @param {{ command: string, safety_analysis?: object, userId?: number }} request
+ * @returns {Promise<{ approved: boolean, command: string, password?: string }>}
+ */
+async function requestApproval(onCommandApprovalRequired, { command, safety_analysis, userId }) {
+  if (!onCommandApprovalRequired) {
+    return { approved: true, command };
+  }
+  const commandId = generateCommandId();
+  onCommandApprovalRequired({ commandId, command, safety_analysis });
+  return registerPendingCommand(commandId, command, userId);
+}
+
 module.exports = {
   registerPendingCommand,
   resolveCommand,
-  pendingCommands
+  pendingCommands,
+  generateCommandId,
+  requestApproval
 };

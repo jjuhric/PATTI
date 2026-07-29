@@ -271,4 +271,23 @@ CREATE TABLE IF NOT EXISTS course_generation_jobs (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- Scratchpad for a single user turn's decomposed sub-tasks. The Supervisor loop
+-- persists each delegated sub-agent's full result here immediately, keeping only
+-- a short pointer in its own live reasoning context (see runAgentLoop in
+-- backend/services/agent_loop.js). Rows are deleted once the turn's final
+-- synthesized response has been produced - this is not conversation history,
+-- that's still the messages table.
+CREATE TABLE IF NOT EXISTS subtask_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER NOT NULL,
+  request_id TEXT NOT NULL,
+  agent_name TEXT NOT NULL,
+  task_label TEXT,
+  result_text TEXT,
+  status TEXT NOT NULL DEFAULT 'done', -- 'done' | 'error'
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_subtask_results_request_id ON subtask_results(request_id);
+
 

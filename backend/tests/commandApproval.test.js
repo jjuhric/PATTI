@@ -1,4 +1,4 @@
-const { registerPendingCommand, resolveCommand, pendingCommands } = require('../utils/commandApproval');
+const { registerPendingCommand, resolveCommand, pendingCommands, requestApproval } = require('../utils/commandApproval');
 
 describe('Command Approval Utility Tests', () => {
   beforeEach(() => {
@@ -43,5 +43,41 @@ describe('Command Approval Utility Tests', () => {
     const result = await promise;
     expect(result.approved).toBe(true);
     expect(result.command).toBe(command);
+  });
+
+  describe('requestApproval', () => {
+    test('auto-approves when no onCommandApprovalRequired callback is supplied', async () => {
+      const result = await requestApproval(undefined, { command: 'echo hi', userId: 1 });
+      expect(result).toEqual({ approved: true, command: 'echo hi' });
+    });
+
+    test('notifies the callback and resolves once the real decision comes in', async () => {
+      let firedEvent = null;
+      const onCommandApprovalRequired = (evt) => {
+        firedEvent = evt;
+        setTimeout(() => resolveCommand(evt.commandId, true), 10);
+      };
+
+      const result = await requestApproval(onCommandApprovalRequired, {
+        command: 'rm old-file.txt',
+        safety_analysis: { risk_level: 'medium' },
+        userId: 7
+      });
+
+      expect(firedEvent).not.toBeNull();
+      expect(firedEvent.command).toBe('rm old-file.txt');
+      expect(firedEvent.safety_analysis).toEqual({ risk_level: 'medium' });
+      expect(typeof firedEvent.commandId).toBe('string');
+      expect(result.approved).toBe(true);
+    });
+
+    test('propagates rejection from the real decision', async () => {
+      const onCommandApprovalRequired = (evt) => {
+        setTimeout(() => resolveCommand(evt.commandId, false), 10);
+      };
+
+      const result = await requestApproval(onCommandApprovalRequired, { command: 'rm old-file.txt', userId: 7 });
+      expect(result.approved).toBe(false);
+    });
   });
 });

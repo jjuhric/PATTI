@@ -485,21 +485,37 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
       settings.onStatusUpdate(`Asking ${decision.tool} agent for operational task: "${decision.action || 'processing'}"...`);
     }
 
-    // Rule 1 & 8: Intercept write actions or tool generation cycles
-    const isMutationAction = ['write_file', 'execute_command'].includes(decision.tool) ||
-                             (decision.tool === 'dev_pipeline' && decision.action === 'create_tool') ||
-                             (decision.tool === 'remote_node_bridge' && ['write_file', 'run_command'].includes(decision.action));
+    // Rule 1 & 8: Intercept genuinely novel, higher-blast-radius mutations that don't
+    // already have their own narrowed, risk-based safety check baked in. write_file and
+    // execute_command are deliberately NOT gated here - handleCoderTool already runs a
+    // QA+Supervisor safety audit for those (see codeVerifier.js) that only pauses for
+    // genuinely damaging actions, and dev_pipeline's create_tool already runs its own
+    // qa_engineer design review before finishing - gating those a second time here would
+    // just re-ask for routine, already-vetted work the user asked for. A remote node write/
+    // command has no such internal review yet (it can disrupt a physical device), so it
+    // still gets a real human approval gate here.
+    const isMutationAction = decision.tool === 'remote_node_bridge' && ['write_file', 'run_command'].includes(decision.action);
 
     if (isMutationAction && settings.onCommandApprovalRequired) {
-      const approved = await settings.onCommandApprovalRequired({
-        tool: decision.tool,
-        action: decision.action,
-        params: decision.params,
-        explanation: `Tool creation or file mutation request initiated by expert thread module.`
+      const commandDescription = decision.params?.command
+        || (decision.params?.filePath ? `Write to "${decision.params.filePath}" on a remote node` : `${decision.tool}: ${decision.action}`);
+
+      // Mirrors the same working pattern already used by coder_tools.js's legacy path
+      // and network_node_tool.js's own sudo-command approval flow (see requestApproval).
+      const { requestApproval } = require('./commandApproval');
+      const approvalResult = await requestApproval(settings.onCommandApprovalRequired, {
+        command: commandDescription,
+        safety_analysis: {
+          risk_level: 'medium',
+          reason: `${agentName} wants to ${decision.action === 'run_command' ? 'run a command' : 'write a file'} on a remote network node.`,
+          potential_harm: 'Could disrupt or damage the remote device if the command or content is incorrect.',
+          recommendation: 'review_carefully'
+        },
+        userId
       });
-      
-      if (!approved) {
-        return "Pipeline Interrupted: Dynamic tool update or file update mutation was explicitly rejected by the human operator.";
+
+      if (!approvalResult.approved) {
+        return "Pipeline Interrupted: Remote node file/command mutation was explicitly rejected by the human operator.";
       }
     }
 

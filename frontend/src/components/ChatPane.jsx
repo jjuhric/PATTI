@@ -1,9 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Search, Send, Square, Cpu, CloudSun, Newspaper, FileText, Volume2, VolumeX, Paperclip, X, Image as ImageIcon } from 'lucide-react';
 import { marked } from 'marked';
+import mermaid from 'mermaid';
 import ExpandableThoughts from './ExpandableThoughts';
 
-// Configure marked to open all links in a new tab
+mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
+
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Configure marked to open all links in a new tab, and to render ```mermaid
+// fenced blocks as live diagrams (via mermaid.run(), triggered after each
+// render - see the effect below) instead of plain preformatted text.
 marked.use({
   renderer: {
     link(token) {
@@ -20,6 +34,18 @@ marked.use({
       const cleanHref = href ? href.replace(/"/g, '&quot;') : '';
       const cleanTitle = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
       return `<a href="${cleanHref}"${cleanTitle} target="_blank" rel="noopener noreferrer">${text}</a>`;
+    },
+    code(code, infostring, escaped) {
+      const lang = (infostring || '').match(/^\S*/)?.[0];
+      if (lang === 'mermaid') {
+        const src = code.replace(/\n$/, '');
+        return `<div class="mermaid">${escapeHtml(src)}</div>\n`;
+      }
+      const cleanCode = code.replace(/\n$/, '') + '\n';
+      if (!lang) {
+        return '<pre><code>' + (escaped ? cleanCode : escapeHtml(cleanCode)) + '</code></pre>\n';
+      }
+      return '<pre><code class="language-' + escapeHtml(lang) + '">' + (escaped ? cleanCode : escapeHtml(cleanCode)) + '</code></pre>\n';
     }
   }
 });
@@ -106,6 +132,32 @@ export default function ChatPane({
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
   }, [inputText]);
+
+  // Render any ```mermaid fenced blocks marked() emitted as <div class="mermaid"> into
+  // real SVG diagrams. mermaid.run() marks each node as processed once rendered, so
+  // re-running it as new messages/streaming content arrive is safe - it only touches
+  // nodes it hasn't already converted. Each diagram is rendered independently (rather
+  // than as one batch) so one node with invalid Mermaid syntax (the LLM occasionally
+  // emits malformed diagrams) can't leave a sibling, valid diagram unrendered - and on
+  // failure that one node falls back to a plain code block showing its raw source
+  // instead of sitting there as an empty div.
+  useEffect(() => {
+    const pending = document.querySelectorAll('.mermaid:not([data-processed="true"])');
+    pending.forEach(async (node) => {
+      const rawSource = node.textContent;
+      try {
+        await mermaid.run({ nodes: [node] });
+      } catch (err) {
+        console.error('Mermaid render failed, falling back to a plain code block:', err);
+        const pre = document.createElement('pre');
+        const codeEl = document.createElement('code');
+        codeEl.className = 'language-mermaid';
+        codeEl.textContent = rawSource;
+        pre.appendChild(codeEl);
+        node.replaceWith(pre);
+      }
+    });
+  }, [messages, streamContent, isStreaming]);
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
