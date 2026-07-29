@@ -168,18 +168,17 @@ This command could cause disruptions. Do you want to run this? Please reply with
 
   // If command approval is enabled, wait for the user to approve (legacy)
   if (options.onCommandApprovalRequired && !options.settings) {
-    const commandId = 'cmd_' + Math.random().toString(36).substring(2, 15);
-    
-    // Fire event to client via SSE callback
-    options.onCommandApprovalRequired({ commandId, command, safety_analysis: params.safety_analysis });
-
-    const { registerPendingCommand } = require('../utils/commandApproval');
-    result = await registerPendingCommand(commandId, command, options.userId);
+    const { requestApproval } = require('../utils/commandApproval');
+    result = await requestApproval(options.onCommandApprovalRequired, {
+      command,
+      safety_analysis: params.safety_analysis,
+      userId: options.userId
+    });
 
     if (!result.approved) {
       return `Command execution rejected by user. Command was: "${command}"`;
     }
-    
+
     command = result.command; // Proceed with potentially edited command
   }
 

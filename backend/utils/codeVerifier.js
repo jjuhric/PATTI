@@ -1,12 +1,28 @@
 const { runAgentTurn, AGENT_PROMPTS } = require('./agents');
 
+// Shared bar for what actually counts as "disruptive" - reused in every QA/Supervisor
+// safety-audit prompt below. Narrowed deliberately: the user has standing authorization
+// for PATTI to do anything they've asked for using the recommended approach, so this
+// gate should only fire for genuinely harmful, irreversible actions to the system or
+// its data - not for routine requested work like installing a dependency or restarting
+// an app-level service.
+const DISRUPTION_CRITERIA = `### What Actually Counts as "Disruptive" (CRITICAL - narrow bar)
+Only flag "can_cause_disruptions" as true for actions that could cause genuine, irreversible harm:
+- Irreversibly deleting or overwriting data/files OUTSIDE the project workspace, or deleting/overwriting far more inside it than what was actually asked for
+- Actions that could corrupt or brick the system, the OS, or a connected device
+- Disabling or weakening security controls (firewall, antivirus, authentication, encryption, access controls)
+- Exposing, logging, or transmitting secrets, credentials, or API keys
+- Any other action whose realistic failure mode is irreversible data loss or system damage the user did not clearly ask for
+Do NOT flag routine, requested, reversible actions - these should be approved without hesitation: installing or uninstalling a package the user asked for, writing or editing project files, running the project's own dev/test/build/lint commands, restarting an application-level service (not an OS or security service), git operations, or other standard automation the user requested. Assume the user wants PATTI to proceed with the recommended approach for anything they've asked for - only pause for genuine, irreversible harm to the system or its information.`;
+
 async function verifyCommandWithQAAndSupervisor(command, agentName, settings) {
   // 1. QA Engineer review
   const qaSystemPrompt = AGENT_PROMPTS.qa_engineer + `\n\n### Code/Command Execution Safety Audit
 You are reviewing a request by agent "${agentName}" to execute the following command:
 "${command}"
 
-Please analyze this command for security vulnerabilities, bugs, compliance, and potential system disruptions.
+Please analyze this command for security vulnerabilities and genuine potential for system disruption.
+${DISRUPTION_CRITERIA}
 You MUST output your decision using the standard JSON format, placing your evaluation in the "params" object:
 {
   "thought": "your step-by-step reasoning",
@@ -54,11 +70,12 @@ NOTE: The QA Engineer has already AUDITED and APPROVED this command execution re
 ${JSON.stringify(qaResult)}
 
 Evaluate the command and the QA report.
+${DISRUPTION_CRITERIA}
 Determine:
 1. Is the command ok to run?
-2. Can it cause disruptions? (e.g. commands modifying system configurations, installing/uninstalling packages, deleting files, starting/stopping services, or potential data loss).
-If it is completely safe and non-disruptive, set "approved_without_user" to true.
-If it can cause disruptions, you MUST set "can_cause_disruptions" to true and "approved_without_user" to false.
+2. Can it cause genuine, irreversible disruptions per the criteria above?
+If it is safe (including routine, requested, reversible actions), set "approved_without_user" to true.
+Only if it meets the disruption criteria above, set "can_cause_disruptions" to true and "approved_without_user" to false.
 
 You MUST output your decision using the standard JSON format, placing your evaluation in the "params" object:
 {
@@ -98,7 +115,8 @@ File Path: "${filePath}"
 Content:
 ${content}
 
-Please analyze this file write for security vulnerabilities, bugs, compliance, and potential system disruptions.
+Please analyze this file write for security vulnerabilities and genuine potential for system disruption.
+${DISRUPTION_CRITERIA}
 You MUST output your decision using the standard JSON format, placing your evaluation in the "params" object:
 {
   "thought": "your step-by-step reasoning",
@@ -147,11 +165,12 @@ NOTE: The QA Engineer has already AUDITED and APPROVED this file write request w
 ${JSON.stringify(qaResult)}
 
 Evaluate the file write and the QA report.
+${DISRUPTION_CRITERIA}
 Determine:
 1. Is the file write ok to proceed?
-2. Can it cause disruptions? (e.g. overwriting critical files, modifying configurations, introducing insecure code, or potential data loss).
-If it is completely safe and non-disruptive, set "approved_without_user" to true.
-If it can cause disruptions, you MUST set "can_cause_disruptions" to true and "approved_without_user" to false.
+2. Can it cause genuine, irreversible disruptions per the criteria above?
+If it is safe (including routine, requested, reversible writes like project files the user asked for), set "approved_without_user" to true.
+Only if it meets the disruption criteria above, set "can_cause_disruptions" to true and "approved_without_user" to false.
 
 You MUST output your decision using the standard JSON format, placing your evaluation in the "params" object:
 {

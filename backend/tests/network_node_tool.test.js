@@ -10,11 +10,12 @@ jest.mock('../db', () => ({
   getDb: jest.fn(() => Promise.resolve(mockDb))
 }));
 
-// Mock commandApproval
-let mockRegisterPendingCommand = jest.fn();
-jest.mock('../utils/commandApproval', () => ({
-  registerPendingCommand: (...args) => mockRegisterPendingCommand(...args)
-}));
+// commandApproval is intentionally NOT mocked - requestApproval() and
+// registerPendingCommand() live in the same module and registerPendingCommand is called
+// via a direct in-module reference, so mocking just one wouldn't actually intercept the
+// other's internal call. Instead, tests resolve the real pending promise via
+// resolveCommand(), exactly like coder_tools_approval.test.js does.
+const { resolveCommand } = require('../utils/commandApproval');
 
 // Mock coder_tools
 let mockHandleCoderTool = jest.fn();
@@ -90,14 +91,17 @@ describe('network_node_tool.js Tests', () => {
 
   test('remote_node_bridge: runs sudo command and handles approval success', async () => {
     mockDb.get.mockResolvedValueOnce({ id: 2, node_name: 'RPi5', is_main_host: 0, ip_address: '192.168.1.101', port: 3000, bridge_secret: 'secret123' });
-    mockRegisterPendingCommand.mockResolvedValueOnce({ approved: true, password: 'sudo_password_123' });
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({ output: 'Command executed remotely' })
     });
 
-    const onCommandApprovalRequired = jest.fn();
+    // Simulates the real /approve-command REST round-trip resolving the pending
+    // promise requestApproval() is awaiting inside network_node_tool.js.
+    const onCommandApprovalRequired = jest.fn((evt) => {
+      setTimeout(() => resolveCommand(evt.commandId, true, undefined, 'sudo_password_123'), 0);
+    });
 
     const res = await handleNetworkNodeTool(
       'remote_node_bridge',
@@ -121,9 +125,10 @@ describe('network_node_tool.js Tests', () => {
 
   test('remote_node_bridge: handles sudo command approval rejection', async () => {
     mockDb.get.mockResolvedValueOnce({ id: 2, node_name: 'RPi5', is_main_host: 0, ip_address: '192.168.1.101', port: 3000, bridge_secret: 'secret123' });
-    mockRegisterPendingCommand.mockResolvedValueOnce({ approved: false });
 
-    const onCommandApprovalRequired = jest.fn();
+    const onCommandApprovalRequired = jest.fn((evt) => {
+      setTimeout(() => resolveCommand(evt.commandId, false), 0);
+    });
 
     const res = await handleNetworkNodeTool(
       'remote_node_bridge',
