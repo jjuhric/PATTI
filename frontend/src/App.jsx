@@ -41,6 +41,16 @@ function App() {
     }
   };
 
+  // Ask once for permission to show real OS notification popups (e.g. "your project build
+  // is ready") so long-running background jobs can notify the user even when they're not
+  // looking at this tab. Browsers only honor requestPermission() from a user gesture in
+  // some cases, but calling it here is harmless if it's a no-op - it just won't prompt.
+  useEffect(() => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
   useEffect(() => {
     window.alert = (message) => {
       let type = 'info';
@@ -119,6 +129,7 @@ function App() {
   const [toolLogs, setToolLogs] = useState([]); // array of active/past tool calls
   const [streamStatus, setStreamStatus] = useState('');
   const [llmBusy, setLlmBusy] = useState(false); // true only when this is a PATTI client and the host is busy
+  const [backgroundJob, setBackgroundJob] = useState(null); // { agent, label } while a background job (e.g. dev_project) is running, else null
 
   const messagesEndRef = useRef(null);
 
@@ -177,6 +188,16 @@ function App() {
       eventSource.onmessage = (event) => {
         try {
           const alert = JSON.parse(event.data);
+
+          // Live "a background job is in progress" signal (e.g. dev_project's build loop) -
+          // separate from the toast/popup path below since it fires repeatedly as progress
+          // updates, not as a one-off user-facing message. See ChatPane's backgroundJob prop
+          // for how this locks chat input and shows a live status banner.
+          if (alert.type === 'agent_status') {
+            setBackgroundJob(alert.active ? { agent: alert.agent, label: alert.label } : null);
+            return;
+          }
+
           if (alert.type === 'error' || alert.type === 'warning') {
             setPopupAlert({
               type: alert.type,
@@ -185,6 +206,17 @@ function App() {
             });
           }
           showToast(alert.message, alert.type || 'info');
+
+          // Real OS notification popup for a completed background job, only when the tab
+          // isn't currently visible (avoids a redundant popup on top of the toast they're
+          // already looking at).
+          if (
+            alert.type === 'info' &&
+            typeof document !== 'undefined' && document.hidden &&
+            typeof Notification !== 'undefined' && Notification.permission === 'granted'
+          ) {
+            new Notification('PATTI', { body: alert.message });
+          }
         } catch (err) {
           console.error('[Alert Stream] Failed to parse message:', err);
         }
@@ -1159,6 +1191,7 @@ function App() {
             handleResolveCommand={handleResolveCommand}
             streamStatus={streamStatus}
             llmBusy={llmBusy}
+            backgroundJob={backgroundJob}
           />
         )}
         {activeTab === 'chat' && isChatPoppedOut && (
@@ -1284,6 +1317,7 @@ function App() {
             handleResolveCommand={handleResolveCommand}
             streamStatus={streamStatus}
             llmBusy={llmBusy}
+            backgroundJob={backgroundJob}
           />
         </PopoutWindow>
       )}

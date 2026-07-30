@@ -93,6 +93,31 @@ describe('ChatPane Component Tests', () => {
     expect(mockHandleSendMessage).toHaveBeenCalled();
   });
 
+  test('locks the input and shows the live status banner while a background job is active', () => {
+    render(
+      <ChatPane
+        {...defaultProps}
+        backgroundJob={{ agent: 'developer_agent', label: 'Writing index.js (3 of 10)...' }}
+      />
+    );
+
+    expect(screen.getByText('developer_agent')).toBeInTheDocument();
+    expect(screen.getByText('Writing index.js (3 of 10)...')).toBeInTheDocument();
+
+    const input = screen.getByPlaceholderText('Writing index.js (3 of 10)...');
+    expect(input).toBeDisabled();
+
+    const form = input.closest('form');
+    const sendBtn = form.querySelector('.btn-send');
+    expect(sendBtn).toBeDisabled();
+  });
+
+  test('does not render the background job banner when no job is active', () => {
+    render(<ChatPane {...defaultProps} backgroundJob={null} />);
+    expect(screen.queryByText(/developer_agent/)).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Send a message...')).not.toBeDisabled();
+  });
+
   test('renders streaming state with empty streamContent (Thinking...)', () => {
     render(
       <ChatPane 
