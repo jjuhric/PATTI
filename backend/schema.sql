@@ -319,9 +319,12 @@ CREATE TABLE IF NOT EXISTS dev_build_jobs (
   user_id INTEGER NOT NULL,
   spec TEXT NOT NULL,
   target_dir TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'planning', -- 'planning' | 'building' | 'completed' | 'failed'
+  job_type TEXT NOT NULL DEFAULT 'build', -- 'build' | 'review' | 'fix'
+  status TEXT NOT NULL DEFAULT 'planning', -- 'planning' | 'building' | 'awaiting_approval' | 'completed' | 'failed'
   step_count INTEGER,
   completed_steps INTEGER DEFAULT 0,
+  pending_command TEXT, -- set while status = 'awaiting_approval'; see projectVerification.js
+  pending_command_safety TEXT, -- JSON safety_analysis for the pending command
   output_summary TEXT,
   error TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

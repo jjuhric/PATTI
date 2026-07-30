@@ -17,7 +17,10 @@ jest.mock('../utils/agents', () => ({ runWorkerAgent: (...args) => mockRunWorker
 const mockHandleImageTool = jest.fn();
 jest.mock('../tools/image_tool', () => ({ handleImageTool: (...args) => mockHandleImageTool(...args) }));
 
-const { handleDevProjectTool, RESULTS_CHAT_TITLE, scanForFakeIndicators, interpretQaVerdict, stripCodeFence } = require('../tools/dev_project_tool');
+const mockRunVerifiedCommand = jest.fn();
+jest.mock('../utils/projectVerification', () => ({ runVerifiedCommand: (...args) => mockRunVerifiedCommand(...args) }));
+
+const { handleDevProjectTool, RESULTS_CHAT_TITLE, FIX_LOG_DIR, scanForFakeIndicators, interpretQaVerdict, stripCodeFence } = require('../tools/dev_project_tool');
 
 // Each build spawns a real `node --check` subprocess per JS file for syntax verification,
 // which is slower than a plain mocked-fetch unit test, especially on Windows.
@@ -187,6 +190,8 @@ describe('handleDevProjectTool', () => {
     // specifically don't need to configure it. Tests that do override this per-test.
     mockRunWorkerAgent.mockReset();
     mockRunWorkerAgent.mockResolvedValue('Reviewed everything - looks genuinely implemented. APPROVE');
+    mockRunVerifiedCommand.mockReset();
+    mockRunVerifiedCommand.mockResolvedValue({ ok: true, stdout: '', stderr: '', exitCode: 0, timedOut: false });
   });
 
   test('returns an error string when the db is unavailable', async () => {
@@ -435,5 +440,225 @@ describe('handleDevProjectTool', () => {
   test('check_status returns an error for an unknown jobId', async () => {
     const output = await handleDevProjectTool(db, userId, 'check_status', { jobId: 'does-not-exist' });
     expect(output).toMatch(/^Error: No job found/);
+  });
+
+  describe('execution verification (setupCommands/verifyCommand)', () => {
+    test('a passing verifyCommand is reported as real, successful verification', async () => {
+      const targetDir = path.join(testProjectsRoot, 'verifypass');
+      const planObj = {
+        files: [{ file: 'index.js', purpose: 'Entry point', contract: '' }],
+        setupCommands: ['npm install'],
+        verifyCommand: 'npm test'
+      };
+      global.fetch = mockPlanThenFiles(planObj, ["console.log('hi');"]);
+      mockRunVerifiedCommand.mockResolvedValue({ ok: true, stdout: 'all tests passed', stderr: '', exitCode: 0, timedOut: false });
+
+      const output = await handleDevProjectTool(db, userId, 'start_project', { spec: 'a tested app', targetDir });
+      const jobId = extractJobId(output);
+      const row = await waitForJobStatus(db, jobId);
+
+      expect(row.status).toBe('completed');
+      expect(mockRunVerifiedCommand).toHaveBeenCalledTimes(2); // setup + verify
+      expect(mockRunVerifiedCommand).toHaveBeenCalledWith(db, jobId, expect.anything(), 'dev_project', 'npm install', targetDir, expect.anything());
+      expect(mockRunVerifiedCommand).toHaveBeenCalledWith(db, jobId, expect.anything(), 'dev_project', 'npm test', targetDir, expect.anything());
+      expect(row.output_summary).toMatch(/Execution verification: \*\*passed\*\*/);
+      expect(row.output_summary).toContain('all tests passed');
+    });
+
+    test('a failing verifyCommand triggers one regeneration cycle then re-verifies successfully', async () => {
+      const targetDir = path.join(testProjectsRoot, 'verifyfail-then-pass');
+      const planObj = {
+        files: [{ file: 'index.js', purpose: 'Entry point', contract: '' }],
+        setupCommands: [],
+        verifyCommand: 'node index.js'
+      };
+      let fetchCallCount = 0;
+      global.fetch = jest.fn(async () => {
+        fetchCallCount++;
+        if (fetchCallCount === 1) return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(planObj) } }] }) };
+        if (fetchCallCount === 2) return { ok: true, json: async () => ({ choices: [{ message: { content: 'console.log(broken' } }] }) };
+        return { ok: true, json: async () => ({ choices: [{ message: { content: "console.log('fixed');" } }] }) };
+      });
+
+      let verifyCallCount = 0;
+      mockRunVerifiedCommand.mockImplementation(async () => {
+        verifyCallCount++;
+        if (verifyCallCount === 1) return { ok: false, stdout: '', stderr: 'ReferenceError: broken is not defined', exitCode: 1, timedOut: false };
+        return { ok: true, stdout: 'ran fine', stderr: '', exitCode: 0, timedOut: false };
+      });
+
+      let qaCallCount = 0;
+      mockRunWorkerAgent.mockImplementation(async (agentName) => {
+        if (agentName === 'qa_engineer') {
+          qaCallCount++;
+          if (qaCallCount === 1) return 'APPROVE'; // normal post-build QA pass
+          return 'ISSUES: index.js - crashes on startup\nREJECT'; // verify-failure diagnosis
+        }
+        return 'APPROVE';
+      });
+
+      const output = await handleDevProjectTool(db, userId, 'start_project', { spec: 'an app with a bug', targetDir });
+      const jobId = extractJobId(output);
+      const row = await waitForJobStatus(db, jobId);
+
+      expect(row.status).toBe('completed');
+      expect(verifyCallCount).toBe(2);
+      expect(fs.readFileSync(path.join(targetDir, 'index.js'), 'utf8')).toBe("console.log('fixed');");
+      expect(row.output_summary).toMatch(/Execution verification: \*\*passed\*\*/);
+    });
+  });
+
+  describe('review_project', () => {
+    test('reports on a real directory without writing any files', async () => {
+      const targetDir = path.join(testProjectsRoot, 'reviewme');
+      fs.mkdirSync(targetDir, { recursive: true });
+      fs.writeFileSync(path.join(targetDir, 'app.js'), "console.log('already here');", 'utf8');
+
+      mockRunWorkerAgent.mockResolvedValue('Everything looks correct and complete.\n\nVERDICT: Good as-is');
+
+      const output = await handleDevProjectTool(db, userId, 'review_project', { targetDir });
+      expect(output).toMatch(/Started reviewing the project/);
+      const jobId = /\(job (\S+)\)/.exec(output)[1];
+      const row = await waitForJobStatus(db, jobId);
+
+      expect(row.status).toBe('completed');
+      expect(row.job_type).toBe('review');
+      expect(row.output_summary).toContain('VERDICT: Good as-is');
+
+      // No files were written or modified.
+      expect(fs.readFileSync(path.join(targetDir, 'app.js'), 'utf8')).toBe("console.log('already here');");
+      expect(fs.readdirSync(targetDir)).toEqual(['app.js']);
+
+      const chat = await db.get('SELECT * FROM chats WHERE user_id = ? AND title = ?', [userId, RESULTS_CHAT_TITLE]);
+      const message = await db.get('SELECT * FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', [chat.id]);
+      expect(message.content).toContain('VERDICT: Good as-is');
+    });
+
+    test('returns an error when targetDir does not exist', async () => {
+      const output = await handleDevProjectTool(db, userId, 'review_project', { targetDir: path.join(testProjectsRoot, 'does-not-exist-dir') });
+      expect(output).toMatch(/^Error: Directory not found/);
+    });
+
+    test('returns an error when targetDir is missing', async () => {
+      const output = await handleDevProjectTool(db, userId, 'review_project', {});
+      expect(output).toMatch(/^Error: "targetDir"/);
+    });
+  });
+
+  describe('fix_project', () => {
+    test('fixes a flagged file, writes a PATTI_FIX_LOG report, and reports success when no verification is configured', async () => {
+      const targetDir = path.join(testProjectsRoot, 'fixme');
+      fs.mkdirSync(targetDir, { recursive: true });
+      fs.writeFileSync(path.join(targetDir, 'broken.js'), 'this is not valid content', 'utf8');
+
+      mockRunWorkerAgent.mockResolvedValue(JSON.stringify({
+        issues: [{ file: 'broken.js', problem: 'Contains invalid/placeholder content', fix: 'Write a real working implementation' }],
+        setupCommands: [],
+        verifyCommand: ''
+      }));
+      global.fetch = jest.fn(async () => ({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: "console.log('fixed for real');" } }] })
+      }));
+
+      const output = await handleDevProjectTool(db, userId, 'fix_project', { targetDir, instructions: 'Please fix broken.js' });
+      expect(output).toMatch(/Started fixing the project/);
+      const jobId = /\(job (\S+)\)/.exec(output)[1];
+      const row = await waitForJobStatus(db, jobId);
+
+      expect(row.status).toBe('completed');
+      expect(row.job_type).toBe('fix');
+      expect(fs.readFileSync(path.join(targetDir, 'broken.js'), 'utf8')).toBe("console.log('fixed for real');");
+
+      const logDir = path.join(targetDir, FIX_LOG_DIR);
+      expect(fs.existsSync(logDir)).toBe(true);
+      const logFiles = fs.readdirSync(logDir);
+      expect(logFiles.length).toBe(1);
+      const logContent = fs.readFileSync(path.join(logDir, logFiles[0]), 'utf8');
+      expect(logContent).toContain('broken.js');
+      expect(logContent).toContain('Contains invalid/placeholder content');
+
+      expect(row.output_summary).toMatch(/Fixes applied and verified/);
+      expect(row.output_summary).toContain(FIX_LOG_DIR);
+
+      // No verification was configured (empty setupCommands/verifyCommand) - the fix log must
+      // say verification was not performed, not falsely claim it "passed" by running the
+      // project for real (the exact bug a live test caught: a crashed diagnosis produced
+      // "Fixed 0 file(s)... Passed - actually run for real" when nothing had actually run).
+      expect(logContent).toMatch(/Not performed/);
+      expect(logContent).not.toMatch(/Passed - the project was actually installed/);
+    });
+
+    // The exact real-world bug this fixes: a live run had the local LLM get unloaded mid-
+    // diagnosis, and the old code swallowed that error and returned an empty issues list,
+    // reporting "Fixed 0 file(s)... none needed" - falsely claiming the project needed no
+    // changes when diagnosis had never actually completed.
+    test('a diagnosis call that fails to run fails the job honestly instead of claiming no issues were found', async () => {
+      const targetDir = path.join(testProjectsRoot, 'fixdiagnosisfails');
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      mockRunWorkerAgent.mockRejectedValue(new Error('LLM Error: 400 - {"error":"Model is unloaded."}'));
+
+      const output = await handleDevProjectTool(db, userId, 'fix_project', { targetDir, instructions: 'fix the known issue' });
+      const jobId = /\(job (\S+)\)/.exec(output)[1];
+      const row = await waitForJobStatus(db, jobId);
+
+      expect(row.status).toBe('failed');
+      expect(row.error).toMatch(/Model is unloaded/);
+
+      const chat = await db.get('SELECT * FROM chats WHERE user_id = ? AND title = ?', [userId, RESULTS_CHAT_TITLE]);
+      const message = await db.get('SELECT * FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', [chat.id]);
+      expect(message.content).toMatch(/Project build failed/);
+      expect(fs.existsSync(path.join(targetDir, FIX_LOG_DIR))).toBe(false);
+    });
+
+    test('returns an error when instructions is missing', async () => {
+      const output = await handleDevProjectTool(db, userId, 'fix_project', { targetDir: testProjectsRoot });
+      expect(output).toMatch(/^Error: "instructions"/);
+    });
+
+    test('returns an error when targetDir does not exist', async () => {
+      const output = await handleDevProjectTool(db, userId, 'fix_project', { targetDir: path.join(testProjectsRoot, 'nope'), instructions: 'fix it' });
+      expect(output).toMatch(/^Error: Directory not found/);
+    });
+  });
+
+  describe('approve_command / reject_command', () => {
+    async function makeAwaitingApprovalJob(jobId) {
+      await db.run(
+        'INSERT INTO dev_build_jobs (job_id, user_id, spec, target_dir, status, pending_command, pending_command_safety) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [jobId, userId, 'spec', 'C:\\fake', 'awaiting_approval', 'rm -rf x', JSON.stringify({ reason: 'test' })]
+      );
+    }
+
+    test('approve_command flips status to approved_command', async () => {
+      await makeAwaitingApprovalJob('job-approve-1');
+      const output = await handleDevProjectTool(db, userId, 'approve_command', { jobId: 'job-approve-1' });
+      expect(output).toMatch(/Recorded your decision \(approved\)/);
+      const row = await db.get('SELECT status FROM dev_build_jobs WHERE job_id = ?', ['job-approve-1']);
+      expect(row.status).toBe('approved_command');
+    });
+
+    test('reject_command flips status to rejected_command', async () => {
+      await makeAwaitingApprovalJob('job-reject-1');
+      const output = await handleDevProjectTool(db, userId, 'reject_command', { jobId: 'job-reject-1' });
+      expect(output).toMatch(/Recorded your decision \(rejected\)/);
+      const row = await db.get('SELECT status FROM dev_build_jobs WHERE job_id = ?', ['job-reject-1']);
+      expect(row.status).toBe('rejected_command');
+    });
+
+    test('errors for an unknown jobId', async () => {
+      const output = await handleDevProjectTool(db, userId, 'approve_command', { jobId: 'does-not-exist' });
+      expect(output).toMatch(/^Error: No job found/);
+    });
+
+    test('errors when the job is not currently awaiting approval', async () => {
+      await db.run(
+        'INSERT INTO dev_build_jobs (job_id, user_id, spec, target_dir, status) VALUES (?, ?, ?, ?, ?)',
+        ['job-not-waiting', userId, 'spec', 'C:\\fake', 'building']
+      );
+      const output = await handleDevProjectTool(db, userId, 'approve_command', { jobId: 'job-not-waiting' });
+      expect(output).toMatch(/is not currently awaiting approval/);
+    });
   });
 });

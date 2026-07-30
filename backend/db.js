@@ -184,6 +184,22 @@ async function getDb() {
     // via a partial unique index (idempotent for both fresh and legacy databases).
     await dbConnection.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_single_patti_client ON network_nodes(node_role) WHERE node_role = 'patti_client'");
 
+    // Migration for dev_build_jobs: job_type distinguishes build|review|fix jobs, and
+    // pending_command/pending_command_safety persist a command awaiting human approval so
+    // a background job's wait survives a service restart (see backend/utils/projectVerification.js).
+    const devBuildJobColumns = await dbConnection.all('PRAGMA table_info(dev_build_jobs)');
+    if (devBuildJobColumns.length > 0) {
+      if (!devBuildJobColumns.some(col => col.name === 'job_type')) {
+        await dbConnection.run("ALTER TABLE dev_build_jobs ADD COLUMN job_type TEXT NOT NULL DEFAULT 'build'");
+      }
+      if (!devBuildJobColumns.some(col => col.name === 'pending_command')) {
+        await dbConnection.run('ALTER TABLE dev_build_jobs ADD COLUMN pending_command TEXT');
+      }
+      if (!devBuildJobColumns.some(col => col.name === 'pending_command_safety')) {
+        await dbConnection.run('ALTER TABLE dev_build_jobs ADD COLUMN pending_command_safety TEXT');
+      }
+    }
+
     // Auto-migrate deprecated gemini-1.5-flash entries to gemini-2.0-flash
     await dbConnection.run("UPDATE user_settings SET model_name = 'gemini-2.0-flash' WHERE model_name = 'gemini-1.5-flash'");
     await dbConnection.run("UPDATE user_settings SET preferred_online_model = 'gemini-2.0-flash' WHERE preferred_online_model = 'gemini-1.5-flash'");

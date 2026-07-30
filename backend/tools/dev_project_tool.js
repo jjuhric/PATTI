@@ -7,12 +7,17 @@ const { generateText, buildSettingsForUser } = require('../utils/llm_text');
 const { resolveSafePath } = require('../utils/pathSecurity');
 const { handleJobStoreTool, storeChunked } = require('./job_store_tool');
 const { handleImageTool } = require('./image_tool');
+const { runVerifiedCommand } = require('../utils/projectVerification');
 const logger = require('../utils/logger');
 
 const RESULTS_CHAT_TITLE = 'Software Projects';
 const STATUS_AGENT_NAME = 'developer_agent';
 const MAX_STEPS = 40;
 const MAX_QA_CYCLES = 2;
+const MAX_VERIFY_CYCLES = 2;
+const MAX_FIX_CYCLES = 5; // more generous than build cycles - the user explicitly said a fix
+                          // job taking a long time is fine in exchange for it genuinely working
+const FIX_LOG_DIR = 'PATTI_FIX_LOG';
 
 // Live progress signal for the frontend: a background job like this one runs fire-and-
 // forget from the chat's point of view, so without this the UI has no way to know PATTI is
@@ -72,11 +77,38 @@ async function handleDevProjectTool(db, userId, action, params = {}) {
     if (action === 'check_status') {
       return await handleCheckStatus(db, userId, params);
     }
+    if (action === 'review_project') {
+      return await handleReviewProject(db, userId, params);
+    }
+    if (action === 'fix_project') {
+      return await handleFixProject(db, userId, params);
+    }
+    if (action === 'approve_command') {
+      return await handleApprovalDecision(db, userId, params, true);
+    }
+    if (action === 'reject_command') {
+      return await handleApprovalDecision(db, userId, params, false);
+    }
     return `Error: Unknown Dev Project action "${action}".`;
   } catch (err) {
     logger.error('Dev project tool error:', err);
     return `Error starting project build: ${err.message}`;
   }
+}
+
+async function handleApprovalDecision(db, userId, params, approved) {
+  const jobId = params.jobId || params.job_id;
+  if (!jobId) return 'Error: "jobId" parameter is required.';
+  const row = await db.get('SELECT * FROM dev_build_jobs WHERE job_id = ? AND user_id = ?', [jobId, userId]);
+  if (!row) return `Error: No job found with ID "${jobId}".`;
+  if (row.status !== 'awaiting_approval') {
+    return `Job "${jobId}" is not currently awaiting approval (status: ${row.status}).`;
+  }
+  await db.run(
+    "UPDATE dev_build_jobs SET status = ? WHERE job_id = ?",
+    [approved ? 'approved_command' : 'rejected_command', jobId]
+  );
+  return `Recorded your decision (${approved ? 'approved' : 'rejected'}) for the pending command on job "${jobId}". It will resume shortly.`;
 }
 
 async function handleStartProject(db, userId, params) {
@@ -132,6 +164,9 @@ async function handleCheckStatus(db, userId, params = {}) {
   if (row.status === 'failed') {
     return `Project build in "${row.target_dir}" failed: ${row.error || 'unknown error'}.`;
   }
+  if (row.status === 'awaiting_approval') {
+    return `Job "${row.job_id}" for "${row.target_dir}" is paused, waiting on your approval to run:\n\`${row.pending_command}\`\nUse the approve_command/reject_command action with this jobId to continue.`;
+  }
   const progress = row.step_count
     ? `${row.completed_steps || 0} of ${row.step_count} files written`
     : 'planning the project';
@@ -149,8 +184,8 @@ async function runDevProjectJob(db, jobId, userId, spec, targetDir) {
   try {
     const settings = await buildSettingsForUser(db, userId);
 
-    const plan = await generatePlan(settings, spec);
-    await storeChunked(db, jobId, 'spec', JSON.stringify(plan, null, 2));
+    const { files: plan, setupCommands, verifyCommand } = await generatePlan(settings, spec);
+    await storeChunked(db, jobId, 'spec', JSON.stringify({ files: plan, setupCommands, verifyCommand }, null, 2));
     await db.run('UPDATE dev_build_jobs SET step_count = ?, status = ? WHERE job_id = ?', [plan.length, 'building', jobId]);
 
     const manifest = buildManifest(plan);
@@ -195,26 +230,30 @@ async function runDevProjectJob(db, jobId, userId, spec, targetDir) {
     let qaCycles = 1;
     while (!qaResult.approved && qaResult.flaggedFiles.length > 0 && qaCycles < MAX_QA_CYCLES) {
       broadcastAgentStatus(true, `QA found issues - fixing ${qaResult.flaggedFiles.length} file(s)...`);
-      for (const flaggedFile of qaResult.flaggedFiles) {
-        const step = plan.find((s) => s.file === flaggedFile);
-        if (!step) continue;
-        const filePath = path.join(targetDir, step.file);
-        const feedback = `A QA review found problems with this file:\n${qaResult.output}\nFix the issues above and output the corrected complete file contents.`;
-
-        if (step.type === 'graphic') {
-          await runGraphicsStep(db, userId, settings, spec, manifest, step, filePath, feedback);
-        } else {
-          const assetNotes = step.assetQueries.length > 0
-            ? await fetchStepAssets(targetDir, step.assetQueries)
-            : '';
-          const content = await generateFileContent(settings, spec, manifest, step, feedback, assetNotes);
-          fs.writeFileSync(filePath, content, 'utf8');
-          checkSyntax(filePath);
-        }
-      }
+      await regenerateFlaggedFiles(qaResult.flaggedFiles, qaResult.output, plan, targetDir, settings, userId, spec, manifest, db);
       qaCycles++;
       broadcastAgentStatus(true, 'Running QA review...');
       qaResult = await runQaReview(db, userId, settings, spec, targetDir, writtenFiles);
+    }
+
+    // Real execution verification: install dependencies then actually run the verify command,
+    // rather than trusting a read-only QA review alone - the direct fix for a build that "QA
+    // approved" yet a human found didn't actually run (a live build's markdown-fence-corrupted
+    // requirements.txt/Cargo.toml passed code review but failed at `pip install`/`cargo build`).
+    let verification = { attempted: false, passed: true, evidence: '' };
+    if (setupCommands.length > 0 || verifyCommand) {
+      broadcastAgentStatus(true, 'Installing dependencies and verifying the build actually works...');
+      verification = await runSetupAndVerify(db, jobId, userId, settings, targetDir, setupCommands, verifyCommand);
+      let verifyCycles = 1;
+      while (!verification.passed && verifyCycles < MAX_VERIFY_CYCLES) {
+        broadcastAgentStatus(true, `Verification failed - diagnosing and fixing (cycle ${verifyCycles})...`);
+        const verifyQa = await runQaReview(db, userId, settings, spec, targetDir, writtenFiles, verification.evidence);
+        if (verifyQa.flaggedFiles.length === 0) break; // nothing actionable identified, stop looping
+        await regenerateFlaggedFiles(verifyQa.flaggedFiles, verifyQa.output, plan, targetDir, settings, userId, spec, manifest, db);
+        verifyCycles++;
+        broadcastAgentStatus(true, 'Re-verifying...');
+        verification = await runSetupAndVerify(db, jobId, userId, settings, targetDir, setupCommands, verifyCommand);
+      }
     }
 
     const hasReadme = plan.some((s) => /readme/i.test(s.file));
@@ -226,14 +265,21 @@ async function runDevProjectJob(db, jobId, userId, spec, targetDir) {
       ? 'QA review: approved - the implementation was checked against the original requirements, not just for syntax.'
       : `QA review: still has open issues after ${qaCycles} review cycle(s), reported honestly rather than being silently shipped as complete:\n${qaResult.output}`;
 
+    const verifyNote = !verification.attempted
+      ? ''
+      : verification.passed
+        ? `\n\nExecution verification: **passed** - actually installed dependencies and ran the project for real, not just reviewed the code.\n${verification.evidence}`
+        : `\n\nExecution verification: **still failing** after real attempts to run it - reported honestly rather than claimed working:\n${verification.evidence}`;
+
     const skippedNote = skippedFiles.length > 0
       ? `\n\n**Not produced (see above for why):**\n${skippedFiles.map((f) => `- ${f}`).join('\n')}`
       : '';
 
-    const summary = `# Project ${qaResult.approved ? 'ready' : 'built, but needs a look'}: ${path.basename(targetDir)}\n\n` +
+    const trulyDone = qaResult.approved && verification.passed;
+    const summary = `# Project ${trulyDone ? 'ready' : 'built, but needs a look'}: ${path.basename(targetDir)}\n\n` +
       `Built **${writtenFiles.length} file(s)**.\n\n` +
       `**Location on this machine:**\n\`${targetDir}\`\n\n` +
-      `${runInstructions}\n\n${qaNote}${skippedNote}\n\n### Files\n${writtenFiles.map((f) => `- ${f}`).join('\n')}`;
+      `${runInstructions}\n\n${qaNote}${verifyNote}${skippedNote}\n\n### Files\n${writtenFiles.map((f) => `- ${f}`).join('\n')}`;
 
     await postToResultsChat(db, userId, summary);
     await db.run(
@@ -262,7 +308,7 @@ function buildManifest(plan) {
 }
 
 async function generatePlan(settings, spec) {
-  const systemPrompt = 'You are an expert software architect. You output ONLY a strict JSON array, nothing else - no markdown code fences, no commentary before or after it.';
+  const systemPrompt = 'You are an expert software architect. You output ONLY a strict JSON object, nothing else - no markdown code fences, no commentary before or after it.';
   const baseUserPrompt = `Design the file layout for this project:
 "${spec}"
 
@@ -276,31 +322,26 @@ Rules for real assets: for any file that needs a real photographic/real-world im
 
 Rules for custom graphics: for a file that IS itself a custom (non-photographic) visual asset - an icon, badge, or illustration - set "type": "graphic" instead of describing code for it; it will be authored separately as real hand-written SVG.
 
-Output ONLY a JSON array like this, with no other text:
-[{"file": "relative/path.ext", "purpose": "One sentence describing what this file does", "contract": "The functions/exports/data shapes this file provides that other files may depend on (empty string if none)", "risk": "low", "approach": "", "assetQueries": [], "type": "code"}, ...]`;
+Rules for real verification: list any commands needed to install dependencies in "setupCommands" (e.g. ["npm install"]), and a single "verifyCommand" that actually proves the project works (a test suite, or a self-contained CLI invocation with example arguments) - prefer something that naturally exits over something that blocks. If the project is a long-running server, design "verifyCommand" to start it, briefly confirm a "ready"/"listening" signal, then stop it, rather than blocking forever. Leave both empty only if the project genuinely has nothing to install or run (e.g. static files only).
+
+Output ONLY a JSON object like this, with no other text:
+{"files": [{"file": "relative/path.ext", "purpose": "One sentence describing what this file does", "contract": "The functions/exports/data shapes this file provides that other files may depend on (empty string if none)", "risk": "low", "approach": "", "assetQueries": [], "type": "code"}, ...], "setupCommands": ["npm install"], "verifyCommand": "npm test"}`;
 
   const maxAttempts = 2;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const userPrompt = attempt === 1
       ? baseUserPrompt
-      : `${baseUserPrompt}\n\nYour previous response was not a valid JSON array. Output ONLY the JSON array - no markdown code fences, no explanation before or after it.`;
+      : `${baseUserPrompt}\n\nYour previous response was not a valid JSON object. Output ONLY the JSON object - no markdown code fences, no explanation before or after it.`;
 
     const raw = await generateText(settings, systemPrompt, userPrompt);
-    const cleaned = raw.replace(/```(?:json)?/gi, '');
-    const start = cleaned.indexOf('[');
-    const end = cleaned.lastIndexOf(']');
+    const parsed = extractJsonObjectOrArray(raw);
 
-    let parsed;
-    if (start !== -1 && end !== -1 && end > start) {
-      try {
-        parsed = JSON.parse(cleaned.slice(start, end + 1));
-      } catch (e) {
-        parsed = null;
-      }
-    }
+    // Defensive: tolerate the model outputting a bare array (the old schema) by treating it
+    // as the files list with no setup/verify commands, rather than failing the whole plan.
+    const filesRaw = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.files) ? parsed.files : null);
 
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed.slice(0, MAX_STEPS).map((s, i) => ({
+    if (Array.isArray(filesRaw) && filesRaw.length > 0) {
+      const files = filesRaw.slice(0, MAX_STEPS).map((s, i) => ({
         file: (s && s.file ? String(s.file) : `file_${i + 1}.txt`).trim().replace(/^[/\\]+/, ''),
         purpose: (s && s.purpose ? String(s.purpose) : '').trim(),
         contract: (s && s.contract ? String(s.contract) : '').trim(),
@@ -309,6 +350,11 @@ Output ONLY a JSON array like this, with no other text:
         assetQueries: Array.isArray(s && s.assetQueries) ? s.assetQueries.map(String).filter(Boolean).slice(0, 5) : [],
         type: s && s.type === 'graphic' ? 'graphic' : 'code'
       }));
+      const setupCommands = Array.isArray(parsed && parsed.setupCommands)
+        ? parsed.setupCommands.map(String).filter(Boolean).slice(0, 10)
+        : [];
+      const verifyCommand = (parsed && typeof parsed.verifyCommand === 'string') ? parsed.verifyCommand.trim() : '';
+      return { files, setupCommands, verifyCommand };
     }
 
     if (attempt === maxAttempts) {
@@ -316,6 +362,34 @@ Output ONLY a JSON array like this, with no other text:
       throw new Error(`The model returned a malformed project plan after ${maxAttempts} attempts. Raw response started with: "${snippet}"`);
     }
   }
+}
+
+// Shared JSON extraction: strips code fences, then tries an object ({...}) first and falls
+// back to an array ([...]) - both generatePlan and diagnoseIssues use this same tolerant
+// parsing (the model occasionally wraps its JSON in commentary despite instructions not to).
+function extractJsonObjectOrArray(raw) {
+  const cleaned = raw.replace(/```(?:json)?/gi, '');
+  const candidates = [];
+  const objStart = cleaned.indexOf('{');
+  const objEnd = cleaned.lastIndexOf('}');
+  if (objStart !== -1 && objEnd !== -1 && objEnd > objStart) {
+    candidates.push(cleaned.slice(objStart, objEnd + 1));
+  }
+  const arrStart = cleaned.indexOf('[');
+  const arrEnd = cleaned.lastIndexOf(']');
+  if (arrStart !== -1 && arrEnd !== -1 && arrEnd > arrStart) {
+    candidates.push(cleaned.slice(arrStart, arrEnd + 1));
+  }
+  // Prefer whichever candidate starts first (the outermost/actual JSON payload).
+  candidates.sort((a, b) => cleaned.indexOf(a) - cleaned.indexOf(b));
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch (e) {
+      // try next candidate
+    }
+  }
+  return null;
 }
 
 // Fetches one or more real photographic assets for a plan step via image_tool's Wikimedia
@@ -444,7 +518,7 @@ ${step.contract ? `Requirements: ${step.contract}\n` : ''}${feedback ? `${feedba
 // flow (dev_pipeline_tool.js:97-129), but checking functional completeness against the
 // original spec rather than tool-registry conventions - the actual fix for a build that
 // syntax-checks fine but silently fakes a hard requirement.
-async function runQaReview(db, userId, settings, spec, targetDir, writtenFiles) {
+async function runQaReview(db, userId, settings, spec, targetDir, writtenFiles, extraEvidence) {
   const { runWorkerAgent } = require('../utils/agents');
   const qaTask = `Perform a genuine functional QA review of the software project just built at "${targetDir}", for this original request:
 "${spec}"
@@ -453,7 +527,7 @@ Files written:
 ${writtenFiles.map((f) => `- ${f}`).join('\n')}
 
 Read the actual file contents (use read_file/list_dir) and verify EVERY requirement in the original request is genuinely implemented for real - not just present in a file. Specifically check for: simulated/mocked logic standing in for real functionality (e.g. a "networking" file that never actually sends anything over a real connection), placeholder or invented URLs/assets, and any requirement that was silently skipped.
-
+${extraEvidence ? `\nReal command output from actually trying to build/run this project (this is ground truth - diagnose the real cause):\n${extraEvidence}\n` : ''}
 If everything is genuinely implemented, end your review with the single word APPROVE.
 If not, list every problem as a separate line formatted exactly as "ISSUES: <file path> - <problem>", then end with the single word REJECT.`;
 
@@ -485,6 +559,294 @@ function interpretQaVerdict(qaOutput) {
   return !(hasIssuesList || hasExplicitReject);
 }
 
+// Shared per-file regeneration used by both the QA-reject cycle and the verify-failure
+// recovery cycle - given flagged file names and the reviewer's feedback text, looks up each
+// file's plan step and regenerates it with that feedback (or re-delegates a graphic step).
+async function regenerateFlaggedFiles(flaggedFiles, feedbackText, plan, targetDir, settings, userId, spec, manifest, db) {
+  for (const flaggedFile of flaggedFiles) {
+    const step = plan.find((s) => s.file === flaggedFile);
+    if (!step) continue;
+    const filePath = path.join(targetDir, step.file);
+    const feedback = `A review found problems with this file:\n${feedbackText}\nFix the issues above and output the corrected complete file contents.`;
+
+    if (step.type === 'graphic') {
+      await runGraphicsStep(db, userId, settings, spec, manifest, step, filePath, feedback);
+    } else {
+      const assetNotes = step.assetQueries.length > 0
+        ? await fetchStepAssets(targetDir, step.assetQueries)
+        : '';
+      const content = await generateFileContent(settings, spec, manifest, step, feedback, assetNotes);
+      fs.writeFileSync(filePath, content, 'utf8');
+      checkSyntax(filePath);
+    }
+  }
+}
+
+// Actually installs dependencies and runs the verify command for real, via the safety-gated
+// runVerifiedCommand (backend/utils/projectVerification.js) - this is what makes "QA approved"
+// mean the project genuinely works, not just that the code looked right on a read-only review.
+async function runSetupAndVerify(db, jobId, userId, settings, targetDir, setupCommands, verifyCommand) {
+  const transcript = [];
+  const postToResultsChatBound = (message) => postToResultsChat(db, userId, message);
+  const noteFor = (result) => result.rejected ? '\n\n(This command was rejected by the user.)' : result.timedOut ? '\n\n(This command timed out.)' : '';
+  const logLine = (cmd, result) => `$ ${cmd}\n${(result.stdout || '').slice(0, 2000)}${result.stderr ? '\n' + result.stderr.slice(0, 2000) : ''}`;
+
+  for (const cmd of setupCommands) {
+    const result = await runVerifiedCommand(db, jobId, settings, 'dev_project', cmd, targetDir, { postToResultsChat: postToResultsChatBound });
+    transcript.push(logLine(cmd, result));
+    if (!result.ok) {
+      return { attempted: true, passed: false, evidence: transcript.join('\n\n') + noteFor(result) };
+    }
+  }
+
+  if (verifyCommand) {
+    const result = await runVerifiedCommand(db, jobId, settings, 'dev_project', verifyCommand, targetDir, { postToResultsChat: postToResultsChatBound });
+    transcript.push(logLine(verifyCommand, result));
+    return { attempted: true, passed: result.ok, evidence: transcript.join('\n\n') + noteFor(result) };
+  }
+
+  return { attempted: true, passed: true, evidence: transcript.join('\n\n') };
+}
+
+// Given real directory contents plus instructions/evidence, produces a concrete JSON list of
+// {file, problem, fix} - reuses generatePlan's tolerant JSON parsing. Used by fix_project for
+// its initial diagnosis and any subsequent re-diagnosis after a failed re-verification.
+async function diagnoseIssues(db, userId, settings, targetDir, instructions, evidence) {
+  const { runWorkerAgent } = require('../utils/agents');
+  const task = `You are diagnosing real problems in an existing project at "${targetDir}" so they can be fixed for real.
+
+Instructions/report from the user:
+${instructions}
+${evidence ? `\nReal command output from actually trying to build/run this project (ground truth - diagnose the real cause):\n${evidence}\n` : ''}
+Use your read_file/list_dir tools to explore the real directory - do not guess at contents. Diagnose concrete, real problems (not stylistic nitpicks) and exactly how to fix each one.
+
+Output ONLY a strict JSON object, no markdown fences, no commentary:
+{"issues": [{"file": "relative/path", "problem": "what's actually wrong", "fix": "the concrete fix to make"}, ...], "setupCommands": ["npm install"], "verifyCommand": "a command that actually proves this project works, preferring something that exits over something that blocks"}
+If nothing is actually broken, output an empty "issues" array.`;
+
+  // Deliberately no try/catch here: if this LLM call fails (e.g. the local model was
+  // unloaded mid-job - a real failure mode this live-tested), let it propagate to the
+  // caller's own try/catch (runFixProjectJob), which fails the job honestly via
+  // finishJobWithFailure. Silently swallowing this and returning an empty issues list would
+  // falsely report "no changes needed" when diagnosis never actually ran - exactly the kind
+  // of false-success claim this whole feature exists to prevent.
+  const raw = await runWorkerAgent('qa_engineer', settings, task, db, userId);
+
+  const parsed = extractJsonObjectOrArray(raw);
+  const issuesRaw = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.issues) ? parsed.issues : []);
+  const issues = issuesRaw
+    .filter((i) => i && i.file)
+    .map((i) => ({ file: String(i.file).trim(), problem: String(i.problem || '').trim(), fix: String(i.fix || '').trim() }))
+    .slice(0, MAX_STEPS);
+  const setupCommands = Array.isArray(parsed && parsed.setupCommands) ? parsed.setupCommands.map(String).filter(Boolean).slice(0, 10) : [];
+  const verifyCommand = (parsed && typeof parsed.verifyCommand === 'string') ? parsed.verifyCommand.trim() : '';
+  return { issues, setupCommands, verifyCommand };
+}
+
+// Applies one diagnosed fix to an existing (or missing) file, reusing generateFileContent's
+// feedback-driven regeneration via a minimal synthetic "step" rather than a second bespoke
+// code-generation function.
+async function applyIssueFixes(issues, targetDir, settings, contextSpec) {
+  const fixed = [];
+  for (const issue of issues) {
+    const filePath = path.join(targetDir, issue.file);
+    const existingContent = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
+    const syntheticStep = { file: issue.file, purpose: issue.problem, contract: '', risk: 'low', approach: '', assetQueries: [] };
+    const feedback = existingContent
+      ? `This file already exists with the following content:\n${existingContent}\n\nProblem identified: ${issue.problem}\nRequired fix: ${issue.fix}\n\nOutput the complete corrected file - preserve everything that already works, fix only what's actually broken.`
+      : `This file is missing but should exist. Problem: ${issue.problem}\nRequired fix: ${issue.fix}\n\nOutput the complete new file contents.`;
+    const content = await generateFileContent(settings, contextSpec, '', syntheticStep, feedback, '');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf8');
+    checkSyntax(filePath);
+    fixed.push(issue);
+  }
+  return fixed;
+}
+
+// Documents every fix made in a dedicated folder inside the project, as requested - a
+// timestamped report naming each file changed, why, and the real verification result.
+function writeFixLog(targetDir, instructions, fixLog, verification) {
+  const logDir = path.join(targetDir, FIX_LOG_DIR);
+  fs.mkdirSync(logDir, { recursive: true });
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const logPath = path.join(logDir, `fix_report_${timestamp}.md`);
+
+  const verificationNote = !verification.attempted
+    ? 'Not performed - no setup/verify commands were determined for this project, so nothing was actually run to confirm it works.'
+    : verification.passed
+      ? 'Passed - the project was actually installed/built/run for real after these fixes, and it worked.'
+      : 'Still failing after these fixes - reported honestly:';
+
+  const content = `# PATTI Fix Report - ${new Date().toISOString()}
+
+## What was asked
+${instructions}
+
+## Fixes made (${fixLog.length})
+${fixLog.length > 0 ? fixLog.map((f, i) => `${i + 1}. **${f.file}**\n   - Problem: ${f.problem}\n   - Fix: ${f.fix}`).join('\n\n') : '(No file changes were needed.)'}
+
+## Verification
+${verificationNote}
+${verification.attempted ? (verification.evidence || '(no output captured)') : ''}
+`;
+
+  fs.writeFileSync(logPath, content, 'utf8');
+  return logPath;
+}
+
+// ---- review_project: read-only ----
+
+async function handleReviewProject(db, userId, params) {
+  const targetDir = params.targetDir || params.target_dir;
+  if (!targetDir || typeof targetDir !== 'string' || !targetDir.trim()) {
+    return 'Error: "targetDir" parameter is required.';
+  }
+  let resolvedDir;
+  try {
+    resolvedDir = resolveSafePath(targetDir.trim());
+  } catch (err) {
+    return `Error: ${err.message}`;
+  }
+  if (!fs.existsSync(resolvedDir)) {
+    return `Error: Directory not found at "${resolvedDir}".`;
+  }
+
+  const jobId = crypto.randomUUID();
+  await db.run(
+    'INSERT INTO dev_build_jobs (job_id, user_id, spec, target_dir, job_type, status) VALUES (?, ?, ?, ?, ?, ?)',
+    [jobId, userId, `Review of ${resolvedDir}`, resolvedDir, 'review', 'building']
+  );
+
+  runReviewProjectJob(db, jobId, userId, resolvedDir).catch((err) => {
+    logger.error('[Dev Project] Unhandled review job error:', err);
+  });
+
+  return `Started reviewing the project at "${resolvedDir}" (job ${jobId}). This runs in the background - I'll post the review, including whether anything needs fixing or it's good as-is, to your "${RESULTS_CHAT_TITLE}" chat when it's done. Tell the user this has started; do not wait or poll for it now.`;
+}
+
+async function runReviewProjectJob(db, jobId, userId, targetDir) {
+  global.activeAgentOps = (global.activeAgentOps || 0) + 1;
+  broadcastAgentStatus(true, 'Reviewing the project...');
+  try {
+    const settings = await buildSettingsForUser(db, userId);
+    const { runWorkerAgent } = require('../utils/agents');
+    const reviewTask = `Review the existing project at "${targetDir}" for correctness, bugs, and quality. Use your read_file/list_dir tools to explore the real directory yourself - do not guess at contents.
+
+Check for: actual bugs, broken logic, security issues, incomplete/placeholder implementations, and anything that would stop the project from working correctly.
+
+If the project is genuinely fine, say so plainly - do not invent minor nitpicks just to have something to report. If there are real issues, list each one clearly with the specific file and what's wrong, and suggest the concrete fix.
+
+End your review with a short verdict line: either "VERDICT: Good as-is" or "VERDICT: Changes recommended".`;
+
+    const reviewOutput = await runWorkerAgent('qa_engineer', settings, reviewTask, db, userId);
+    const summary = `# Review: ${path.basename(targetDir)}\n\n**Location:** \`${targetDir}\`\n\n${reviewOutput}`;
+
+    await postToResultsChat(db, userId, summary);
+    await db.run(
+      "UPDATE dev_build_jobs SET status = 'completed', output_summary = ?, completed_at = datetime('now') WHERE job_id = ?",
+      [summary, jobId]
+    );
+    broadcastAgentStatus(false, null);
+    broadcastAlert({ type: 'info', message: `Review of "${targetDir}" is ready.` });
+  } catch (err) {
+    logger.error('[Dev Project] Review job failed:', err);
+    await finishJobWithFailure(db, userId, jobId, targetDir, err.message);
+  } finally {
+    global.activeAgentOps = Math.max(0, (global.activeAgentOps || 0) - 1);
+  }
+}
+
+// ---- fix_project: real fixes + documented fix log ----
+
+async function handleFixProject(db, userId, params) {
+  const targetDir = params.targetDir || params.target_dir;
+  const instructions = params.instructions;
+  if (!targetDir || typeof targetDir !== 'string' || !targetDir.trim()) {
+    return 'Error: "targetDir" parameter is required.';
+  }
+  if (!instructions || typeof instructions !== 'string' || !instructions.trim()) {
+    return 'Error: "instructions" parameter is required.';
+  }
+  let resolvedDir;
+  try {
+    resolvedDir = resolveSafePath(targetDir.trim());
+  } catch (err) {
+    return `Error: ${err.message}`;
+  }
+  if (!fs.existsSync(resolvedDir)) {
+    return `Error: Directory not found at "${resolvedDir}".`;
+  }
+
+  const cleanInstructions = instructions.trim();
+  const jobId = crypto.randomUUID();
+  await db.run(
+    'INSERT INTO dev_build_jobs (job_id, user_id, spec, target_dir, job_type, status) VALUES (?, ?, ?, ?, ?, ?)',
+    [jobId, userId, cleanInstructions, resolvedDir, 'fix', 'planning']
+  );
+
+  runFixProjectJob(db, jobId, userId, cleanInstructions, resolvedDir).catch((err) => {
+    logger.error('[Dev Project] Unhandled fix job error:', err);
+  });
+
+  return `Started fixing the project at "${resolvedDir}" (job ${jobId}). This runs in the background and can take a while since I actually verify the fixes work - I'll post the results, including a documented list of every fix in a "${FIX_LOG_DIR}" folder inside the project, to your "${RESULTS_CHAT_TITLE}" chat when it's done. Tell the user this has started; do not wait or poll for it now.`;
+}
+
+async function runFixProjectJob(db, jobId, userId, instructions, targetDir) {
+  global.activeAgentOps = (global.activeAgentOps || 0) + 1;
+  broadcastAgentStatus(true, 'Diagnosing issues...');
+  try {
+    const settings = await buildSettingsForUser(db, userId);
+    await storeChunked(db, jobId, 'spec', instructions);
+    await db.run("UPDATE dev_build_jobs SET status = 'building' WHERE job_id = ?", [jobId]);
+
+    let diagnosis = await diagnoseIssues(db, userId, settings, targetDir, instructions, '');
+    const fixLog = [];
+    let cycles = 0;
+    let verification = { attempted: false, passed: diagnosis.issues.length === 0, evidence: '' };
+
+    while (diagnosis.issues.length > 0 && cycles < MAX_FIX_CYCLES) {
+      cycles++;
+      broadcastAgentStatus(true, `Fixing ${diagnosis.issues.length} issue(s) (cycle ${cycles})...`);
+      const fixed = await applyIssueFixes(diagnosis.issues, targetDir, settings, instructions);
+      fixLog.push(...fixed);
+      await db.run('UPDATE dev_build_jobs SET completed_steps = ? WHERE job_id = ?', [fixLog.length, jobId]);
+
+      if (diagnosis.setupCommands.length > 0 || diagnosis.verifyCommand) {
+        broadcastAgentStatus(true, 'Re-verifying the fixes...');
+        verification = await runSetupAndVerify(db, jobId, userId, settings, targetDir, diagnosis.setupCommands, diagnosis.verifyCommand);
+      } else {
+        verification = { attempted: false, passed: true, evidence: '' };
+      }
+
+      if (verification.passed) break;
+      broadcastAgentStatus(true, `Verification failed - diagnosing again (cycle ${cycles})...`);
+      diagnosis = await diagnoseIssues(db, userId, settings, targetDir, instructions, verification.evidence);
+    }
+
+    const fixLogPath = writeFixLog(targetDir, instructions, fixLog, verification);
+
+    const summary = `# Fixes ${verification.passed ? 'applied and verified' : 'applied, but verification still has issues'}: ${path.basename(targetDir)}\n\n` +
+      `**Location:** \`${targetDir}\`\n\n` +
+      `Fixed **${fixLog.length} file(s)** across ${cycles} cycle(s).\n\n` +
+      `${verification.attempted ? (verification.passed ? 'Re-ran the project for real and confirmed it now works:\n' + verification.evidence : 'Re-ran the project for real - it still has open issues, reported honestly:\n' + verification.evidence) : 'No setup/verify commands were determined for this project, so no execution verification was performed.'}\n\n` +
+      `Full documentation of every fix: \`${fixLogPath}\`\n\n### Files fixed\n${fixLog.length > 0 ? fixLog.map((f) => `- ${f.file}: ${f.problem}`).join('\n') : '(none needed)'}`;
+
+    await postToResultsChat(db, userId, summary);
+    await db.run(
+      "UPDATE dev_build_jobs SET status = 'completed', output_summary = ?, completed_at = datetime('now') WHERE job_id = ?",
+      [summary, jobId]
+    );
+    broadcastAgentStatus(false, null);
+    broadcastAlert({ type: 'info', message: `Fixes for "${targetDir}" are ready.` });
+  } catch (err) {
+    logger.error('[Dev Project] Fix job failed:', err);
+    await finishJobWithFailure(db, userId, jobId, targetDir, err.message);
+  } finally {
+    global.activeAgentOps = Math.max(0, (global.activeAgentOps || 0) - 1);
+  }
+}
+
 // ---- Shared results-chat / failure handling ----
 
 async function postToResultsChat(db, userId, content) {
@@ -510,4 +872,12 @@ async function finishJobWithFailure(db, userId, jobId, targetDir, message) {
   }
 }
 
-module.exports = { handleDevProjectTool, RESULTS_CHAT_TITLE, scanForFakeIndicators, interpretQaVerdict, stripCodeFence };
+module.exports = {
+  handleDevProjectTool,
+  RESULTS_CHAT_TITLE,
+  scanForFakeIndicators,
+  interpretQaVerdict,
+  stripCodeFence,
+  extractJsonObjectOrArray,
+  FIX_LOG_DIR
+};
