@@ -667,7 +667,10 @@ ${profileDetailsText ? `Here is the user profile details context:\n${profileDeta
     console.error('Failed to get feedback context in runAgentLoop:', fbErr);
   }
 
-  let systemPrompt = AGENT_PROMPTS.supervisor + feedbackContext + activeSkillsPrompt + `\n\n${profileContext}\n\n### User Memories Context:\n${memoriesResult}${dynamicCapabilitiesContext}${workspaceContext}`;
+  const taskResultToolContext = `\n\n### Task Result Lookup Tool (Optional Verification):
+- Delegated results appear in History Context only as a short preview tagged with a row id, e.g. "[news_agent] completed (id=42) - ...". You normally don't need more than the preview. Only if you genuinely need to re-examine a specific result's full text before deciding your next step, call {"tool": "task_result", "action": "read", "params": {"id": 42}}. The full text is always available to the Communication Specialist for the final answer regardless of whether you read it here.`;
+
+  let systemPrompt = AGENT_PROMPTS.supervisor + feedbackContext + activeSkillsPrompt + `\n\n${profileContext}\n\n### User Memories Context:\n${memoriesResult}${dynamicCapabilitiesContext}${workspaceContext}${taskResultToolContext}`;
   let currentHistory = [...cleanedHistory];
   let accumulatedToolOutputs = [];
   let toolCallsCount = 0;
@@ -1142,16 +1145,26 @@ If no changes are required and you can proceed without executing the code, then 
       }
       if (onAgentStatus) onAgentStatus({ agent: 'supervisor', status: 'active' });
 
-      // Programmatic short-circuit on delegation failure to prevent hallucinations
+      // Sub-agent delegation failure: alert and record it, but do NOT abort the whole
+      // coordinator loop. A single specialist erroring out (e.g. a transient LLM/network
+      // "fetch failed") used to hard-return here and kill every other part of a multi-part
+      // request (e.g. "news, weather, and Cowboys" would lose weather/Cowboys just because
+      // news_agent hiccuped first). The failure is still visible to the Supervisor via
+      // currentHistory below (marked FAILED, not "completed") and to the Responder via the
+      // "these are ALL the tool outputs you have" instruction in runAgentResponse, so neither
+      // can hallucinate a success - the Supervisor can now just move on to the next part, and
+      // the existing duplicate-delegation loop detector (seenToolCalls, above) still stops it
+      // from retrying the same broken agent forever.
       if (toolOutput && typeof toolOutput === 'string') {
         if (toolOutput.includes('"status":"error"') || toolOutput.includes('delegation failed')) {
-          onThought(`Sub-agent delegation failure detected. Short-circuiting loop to prevent hallucinations.\n`);
           let errMsg = toolOutput;
           try {
             const parsed = JSON.parse(toolOutput);
             if (parsed.data?.error) errMsg = parsed.data.error;
             else if (parsed.summary) errMsg = parsed.summary;
           } catch (e) { }
+
+          onThought(`Sub-agent delegation failure detected in "${agentName}": ${errMsg}. Continuing with remaining parts of the request.\n`);
 
           try {
             const { broadcastAlert } = require('../routes/alerts');
@@ -1161,9 +1174,6 @@ If no changes are required and you can proceed without executing the code, then 
               timestamp: new Date().toISOString()
             });
           } catch (alertErr) { }
-
-          onContent(`Error: The system specialist failed to execute the task. Details: ${errMsg}`);
-          return;
         }
       }
 
@@ -1221,6 +1231,9 @@ If no changes are required and you can proceed without executing the code, then 
       } else if (decision.tool === 'network_scanner') {
         const { handleNetworkScanner } = require('../tools/network_scanner');
         toolOutput = await handleNetworkScanner(decision.action, decision.params);
+      } else if (decision.tool === 'task_result') {
+        const { handleTaskResultTool } = require('../tools/task_result_tool');
+        toolOutput = await handleTaskResultTool(db, decision.action, decision.params, { requestId });
       } else {
         toolOutput = `Error: Tool "${decision.tool}" is unrecognized by Supervisor.`;
       }
@@ -1247,11 +1260,13 @@ If no changes are required and you can proceed without executing the code, then 
     // Only a short preview goes into currentHistory below - the full text is
     // reassembled from the DB once, at final synthesis time (see dataBlock below).
     const isErrorResult = fullToolOutput.includes('"status":"error"') || fullToolOutput.includes('delegation failed') || fullToolOutput.startsWith('Error:');
+    let subtaskRowId = null;
     try {
-      await db.run(
+      const insertResult = await db.run(
         'INSERT INTO subtask_results (chat_id, request_id, agent_name, task_label, result_text, status) VALUES (?, ?, ?, ?, ?, ?)',
         [chatId, requestId, delegatedAgentName || decision.tool, taskLabelForStore || decision.action || decision.tool, fullToolOutput, isErrorResult ? 'error' : 'done']
       );
+      subtaskRowId = insertResult && insertResult.lastID;
     } catch (dbErr) {
       console.error('Failed to persist subtask result to scratchpad:', dbErr);
     }
@@ -1262,7 +1277,7 @@ If no changes are required and you can proceed without executing the code, then 
     });
     currentHistory.push({
       role: 'user',
-      content: `[${decision.tool}] completed - full result saved to the task scratchpad, not repeated here. Preview: ${fullToolOutput.slice(0, 150)}${fullToolOutput.length > 150 ? '...' : ''}`
+      content: `[${decision.tool}] ${isErrorResult ? 'FAILED' : 'completed'}${subtaskRowId ? ` (id=${subtaskRowId})` : ''} - full result saved to the task scratchpad, not repeated here. Preview: ${fullToolOutput.slice(0, 150)}${fullToolOutput.length > 150 ? '...' : ''}`
     });
 
     toolCallsCount++;
@@ -1301,25 +1316,54 @@ Make sure to answer the user query directly and clearly.`;
     // step-by-step can otherwise talk itself into claiming results are missing even when they
     // were included further down the prompt (observed: a successful weather_expert result was
     // in this exact prompt, but the model still answered "could you remind me of your zipcode?").
-    // Reassemble the FULL combined results from the sub-task scratchpad (not the
-    // truncated/preview text that flowed through the Supervisor's own reasoning
-    // turns) - this is the one point synthesis legitimately needs everything at once
-    // to decide how best to present the combined answer.
+    //
+    // For a small/typical request, reassemble the FULL combined results directly from the
+    // sub-task scratchpad (fast path, one query, unchanged from before). For a large multi-part
+    // request, the combined full text can be large enough to overload a local LLM in one shot
+    // (e.g. "general news, TMZ, weather, NFL, and Cowboys news" - 5 delegated specialists) - in
+    // that case, instead of inlining everything, hand the Communication Specialist a read-by-id
+    // tool (see backend/services/synthesis_gather.js) and a bounded number of turns to pull only
+    // what it needs, with a hard aggregate cap so the eventual prompt size is always bounded
+    // regardless of how many parts were requested.
+    const { runSynthesisGatherLoop, buildFallbackDataBlock, SYNTHESIS_GATHER_THRESHOLD_CHARS, SYNTHESIS_GATHER_AGGREGATE_CAP } = require('./synthesis_gather');
     let hasResults = accumulatedToolOutputs.length > 0;
     let dataBlock = 'DATA_AVAILABLE: no';
     try {
-      const subtaskRows = await db.all(
-        'SELECT agent_name, task_label, result_text, status FROM subtask_results WHERE request_id = ? ORDER BY id',
-        [requestId]
-      );
-      if (subtaskRows && subtaskRows.length > 0) {
+      const { handleTaskResultTool } = require('../tools/task_result_tool');
+      const { results: metaRows } = JSON.parse(await handleTaskResultTool(db, 'list', {}, { requestId }));
+
+      if (metaRows && metaRows.length > 0) {
         hasResults = true;
-        dataBlock = `DATA_AVAILABLE: yes\n${subtaskRows.map(r => `--- [Source: ${r.agent_name}${r.task_label ? ` - ${r.task_label}` : ''}${r.status === 'error' ? ' - ERRORED' : ''}] ---\n${r.result_text}`).join('\n\n')}`;
+        const totalLen = metaRows.reduce((sum, r) => sum + (r.char_count || 0), 0);
+
+        if (totalLen <= SYNTHESIS_GATHER_THRESHOLD_CHARS) {
+          const subtaskRows = await db.all(
+            'SELECT agent_name, task_label, result_text, status FROM subtask_results WHERE request_id = ? ORDER BY id',
+            [requestId]
+          );
+          dataBlock = `DATA_AVAILABLE: yes\n${subtaskRows.map(r => `--- [Source: ${r.agent_name}${r.task_label ? ` - ${r.task_label}` : ''}${r.status === 'error' ? ' - ERRORED' : ''}] ---\n${r.result_text}`).join('\n\n')}`;
+        } else {
+          onThought(`Synthesis data is large (${totalLen} chars across ${metaRows.length} result(s)) - reading it via bounded gather-loop instead of inlining directly.\n`);
+          try {
+            dataBlock = await runSynthesisGatherLoop({
+              db, requestId, metaRows, userMessage,
+              settings: { ...settings, modelName: supervisorModel || settings.modelName },
+              onThought, abortSignal
+            });
+          } catch (gatherErr) {
+            console.error('Synthesis gather loop failed, falling back to bounded direct concatenation:', gatherErr);
+            dataBlock = await buildFallbackDataBlock(db, requestId, SYNTHESIS_GATHER_AGGREGATE_CAP);
+          }
+        }
       }
     } catch (dbErr) {
       console.error('Failed to load subtask scratchpad for synthesis, falling back to in-memory results:', dbErr);
       if (hasResults) {
-        dataBlock = `DATA_AVAILABLE: yes\n${accumulatedToolOutputs.map(t => `--- [Source: ${t.tool}] ---\n${t.output}`).join('\n\n')}`;
+        let fallback = `DATA_AVAILABLE: yes\n${accumulatedToolOutputs.map(t => `--- [Source: ${t.tool}] ---\n${t.output}`).join('\n\n')}`;
+        if (fallback.length > SYNTHESIS_GATHER_AGGREGATE_CAP) {
+          fallback = fallback.slice(0, SYNTHESIS_GATHER_AGGREGATE_CAP) + '\n... [TRUNCATED: Response too large for context]';
+        }
+        dataBlock = fallback;
       }
     }
 

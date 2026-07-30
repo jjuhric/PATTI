@@ -657,4 +657,114 @@ describe('Agent Loop & LLM Stream Unit Tests', () => {
 
     await expect(generateGreetingAndSave(mockDb, 9999, 9999)).resolves.not.toThrow();
   });
+
+  test('runAgentLoop - Supervisor can call the task_result tool to read back a prior delegated result', async () => {
+    // Regression/wiring test for the DB-pointer synthesis change: the Supervisor now has
+    // an optional "task_result" tool (list/read over subtask_results, scoped by request_id)
+    // so it can double-check a specific result instead of relying only on the short preview
+    // in its own history. This exercises the real dispatch branch in agent_loop.js end-to-end.
+    routerDecisions = [
+      {
+        thought: 'Check the weather first.',
+        tool: 'weather',
+        action: 'current',
+        params: { zipcode: '32421', country: 'US' }
+      },
+      {
+        thought: 'Double-check what has been gathered so far via the task result tool.',
+        tool: 'task_result',
+        action: 'list',
+        params: {}
+      },
+      {
+        thought: 'Nothing further to do.',
+        tool: 'none',
+        action: '',
+        params: {}
+      }
+    ];
+
+    const contents = [];
+    await runAgentLoop({
+      db,
+      userId,
+      chatId: 999,
+      provider: 'local',
+      modelName: 'gemma',
+      userMessage: 'What is the weather?',
+      history: [],
+      onThought: jest.fn(),
+      onContent: (c) => contents.push(c),
+      onToolCall: jest.fn()
+    });
+
+    expect(contents.join('')).toBe('Hi responder output.');
+
+    const routerCalls = global.fetch.mock.calls.filter(([url, options]) => {
+      const urlStr = String(url || '');
+      const isChatEndpoint = urlStr.includes('/chat/completions') || urlStr.includes('/v1/messages') || urlStr.includes('/api/v1/chat') || urlStr.includes('1234');
+      const isStreaming = options && options.body && JSON.parse(options.body).stream === true;
+      return isChatEndpoint && !isStreaming;
+    });
+
+    // The 3rd router call is the Supervisor's request for its 3rd decision - its prompt
+    // (built from currentHistory) must include the real task_result "list" tool output
+    // from the 2nd call, proving the dispatch branch actually queried subtask_results
+    // rather than returning something unrelated.
+    const thirdCallBody = JSON.parse(routerCalls[2][1].body);
+    const thirdCallPromptText = thirdCallBody.messages.map(m => m.content).join('\n');
+    expect(thirdCallPromptText).toContain('task_result');
+    // History Context is a JSON-stringified array embedded as escaped text inside a plain
+    // prompt string, so exact quote-escaping depth isn't worth pinning down here - checking
+    // for the underlying words is enough to prove the real list-tool JSON payload made it in.
+    expect(thirdCallPromptText).toContain('count');
+    expect(thirdCallPromptText).toContain('agent_name');
+    expect(thirdCallPromptText).toContain('weather');
+    expect(thirdCallPromptText).toMatch(/count[^a-zA-Z]{1,4}1/);
+  });
+
+  test('runAgentLoop - small delegated payload stays on the fast synthesis path (no extra gather-loop round trips)', async () => {
+    // The final synthesis step is size-gated: a small result set (well under
+    // SYNTHESIS_GATHER_THRESHOLD_CHARS) must go straight to the streaming responder call
+    // with no extra non-streaming "gather" turns in between. Counting router (non-streaming)
+    // calls confirms exactly 2 were made (the 2 scripted Supervisor turns) with none extra.
+    routerDecisions = [
+      {
+        thought: 'Check the weather.',
+        tool: 'weather',
+        action: 'current',
+        params: { zipcode: '32421', country: 'US' }
+      },
+      {
+        thought: 'Done.',
+        tool: 'none',
+        action: '',
+        params: {}
+      }
+    ];
+
+    const contents = [];
+    await runAgentLoop({
+      db,
+      userId,
+      chatId: 999,
+      provider: 'local',
+      modelName: 'gemma',
+      userMessage: 'What is the weather?',
+      history: [],
+      onThought: jest.fn(),
+      onContent: (c) => contents.push(c),
+      onToolCall: jest.fn()
+    });
+
+    expect(contents.join('')).toBe('Hi responder output.');
+
+    const routerCalls = global.fetch.mock.calls.filter(([url, options]) => {
+      const urlStr = String(url || '');
+      const isChatEndpoint = urlStr.includes('/chat/completions') || urlStr.includes('/v1/messages') || urlStr.includes('/api/v1/chat') || urlStr.includes('1234');
+      const isStreaming = options && options.body && JSON.parse(options.body).stream === true;
+      return isChatEndpoint && !isStreaming;
+    });
+    expect(routerCalls).toHaveLength(2);
+  });
 });
