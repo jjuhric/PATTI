@@ -290,4 +290,43 @@ CREATE TABLE IF NOT EXISTS subtask_results (
 );
 CREATE INDEX IF NOT EXISTS idx_subtask_results_request_id ON subtask_results(request_id);
 
+-- General-purpose DB-backed context paging for every agent, not scoped to a single chat
+-- turn. Two uses: 'spec' rows hold a large task/job description handed down by a caller
+-- (e.g. the Supervisor) so only a short job_id pointer needs to live in the worker
+-- agent's own prompt; 'note' rows are the working agent's own scratchpad, written as it
+-- makes progress on a long task and paged back in when it's ready to assemble a final
+-- result. See backend/tools/job_store_tool.js. Swept by age (like subtask_results) rather
+-- than deleted at the end of one turn, since a job (e.g. a background dev build) can
+-- legitimately outlive many turns.
+CREATE TABLE IF NOT EXISTS agent_job_store (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT NOT NULL,
+  entry_type TEXT NOT NULL, -- 'spec' | 'note'
+  seq INTEGER NOT NULL DEFAULT 0,
+  content TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_agent_job_store_job ON agent_job_store(job_id, entry_type, seq);
+
+-- Tracks a single freeform, multi-file application build handled by dev_project_tool.js
+-- (backend/tools/dev_project_tool.js). Mirrors course_generation_jobs' shape/lifecycle,
+-- but for arbitrary software projects instead of courses. The job's spec/plan content
+-- itself lives in agent_job_store (job_id shared with this row's job_id) - this table
+-- only tracks status/progress.
+CREATE TABLE IF NOT EXISTS dev_build_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT UNIQUE NOT NULL,
+  user_id INTEGER NOT NULL,
+  spec TEXT NOT NULL,
+  target_dir TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'planning', -- 'planning' | 'building' | 'completed' | 'failed'
+  step_count INTEGER,
+  completed_steps INTEGER DEFAULT 0,
+  output_summary TEXT,
+  error TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 

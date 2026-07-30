@@ -224,6 +224,15 @@ async function getDb() {
       logger.error('Failed to sweep orphaned subtask_results rows on boot:', err);
     }
 
+    // Sweep old agent_job_store rows (job specs + agent working notes, see
+    // backend/tools/job_store_tool.js). Given a longer age window than subtask_results
+    // since a background dev build (dev_build_jobs) can legitimately run for a while.
+    try {
+      await dbConnection.run("DELETE FROM agent_job_store WHERE created_at < datetime('now', '-3 day')");
+    } catch (err) {
+      logger.error('Failed to sweep orphaned agent_job_store rows on boot:', err);
+    }
+
     // Seed default custom personality and skills if empty
     try {
       const personalityCountRow = await dbConnection.get('SELECT COUNT(*) as count FROM custom_personalities');

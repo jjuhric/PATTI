@@ -392,7 +392,7 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
     const workingDirectory = settings.workingDirectory || path.resolve(path.join(__dirname, '../..'));
     
     // Selectively append workspace context
-    const needsWorkspace = ['developer_agent', 'qa_engineer', 'tool_creator_agent', 'agent_creator_agent', 'coder'].includes(targetAgent);
+    const needsWorkspace = ['developer_agent', 'qa_engineer', 'tool_creator_agent', 'agent_creator_agent', 'coder', 'graphics_engineer'].includes(targetAgent);
     if (needsWorkspace) {
       const workspaceContext = `\n\n### Workspace System Directories:
 - Root Working Directory: ${workingDirectory}
@@ -401,6 +401,14 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
 - Dynamic Tools Registry: ${path.join(workingDirectory, 'tool_registry/tools/')}`;
       systemPrompt += workspaceContext;
     }
+
+    // Always available to every worker agent: a DB-backed paging/scratchpad tool so a
+    // large assigned task, or the agent's own accumulated findings on a long task, never
+    // has to sit entirely inside one live prompt. See backend/tools/job_store_tool.js.
+    systemPrompt += `\n\n### Job Store Tool (Large Task / Working Memory):
+- If your assigned task says it was "staged for paged reading" and gives you a job_id, call {"tool": "job_store", "action": "read_spec", "params": {"job_id": "...", "seq": 0}} and keep incrementing seq while the JSON response's "hasMore" is true, to read your full task before doing anything else.
+- On a long or multi-step task, use {"tool": "job_store", "action": "write_note", "params": {"job_id": "...", "content": "..."}} to record findings/decisions/progress as you go, instead of relying on them staying in your own live context. Use {"tool": "job_store", "action": "read_notes", "params": {"job_id": "...", "seq": 0}} (same paging convention) to read your own notes back later, e.g. when assembling a final result.
+- Pick any stable job_id yourself (e.g. derived from the task) if one wasn't given to you.`;
 
     // Fetch and inject user profile details if db and userId are available
     if (db && userId) {
@@ -530,6 +538,9 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
     } else if (decision.tool === 'host_machine') {
       const { handleHostMachineTool } = require('../tools/host_machine_tool');
       output = await handleHostMachineTool(decision.action, decision.params);
+    } else if (decision.tool === 'image_tool') {
+      const { handleImageTool } = require('../tools/image_tool');
+      output = await handleImageTool(decision.action, decision.params);
     } else if (['read_file', 'write_file', 'list_dir', 'execute_command'].includes(decision.tool)) {
       const { handleCoderTool } = require('../tools/coder_tools');
       output = await handleCoderTool(decision.tool, decision.params, {
@@ -576,6 +587,9 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
     } else if (decision.tool === 'query_system_docs') {
       const { handleSystemDocsTool } = require('../tools/system_docs_tool');
       output = await handleSystemDocsTool('query', decision.params);
+    } else if (decision.tool === 'job_store') {
+      const { handleJobStoreTool } = require('../tools/job_store_tool');
+      output = await handleJobStoreTool(db, decision.action, decision.params);
     } else if (['list_network_nodes', 'remote_node_bridge'].includes(decision.tool)) {
       const { handleNetworkNodeTool } = require('../tools/network_node_tool');
       const mergedParams = { ...decision.params };
@@ -628,6 +642,9 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
     } else if (decision.tool === 'course_builder') {
       const { handleCourseBuilderTool } = require('../tools/course_builder_tool');
       output = await handleCourseBuilderTool(db, userId, decision.action, decision.params);
+    } else if (decision.tool === 'dev_project') {
+      const { handleDevProjectTool } = require('../tools/dev_project_tool');
+      output = await handleDevProjectTool(db, userId, decision.action, decision.params);
     } else if (decision.tool === 'document_formatter') {
       const { handleDocumentFormatterTool } = require('../tools/document_formatter_tool');
       output = await handleDocumentFormatterTool(db, userId, decision.action, decision.params, chatId);

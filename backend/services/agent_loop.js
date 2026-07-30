@@ -1089,10 +1089,35 @@ If no changes are required and you can proceed without executing the code, then 
       const subTask = JSON.stringify(subTaskObj);
       taskLabelForStore = subTaskObj.task || subTaskObj.query || subTaskObj.team || subTaskObj.topic || agentName;
 
+      // Large-task context paging: rather than inlining a huge task/query string directly
+      // into the worker agent's live prompt (the local model's context is genuinely
+      // RAM/GPU-limited), stash it in agent_job_store and hand the worker only a job_id
+      // pointer it can page through via the job_store tool. Small tasks (the common case)
+      // are passed through completely unchanged. See backend/tools/job_store_tool.js.
+      const LARGE_TASK_THRESHOLD = 4000;
+      const rawTaskText = subTaskObj.task || subTaskObj.query || '';
+      let delegateTask = subTask;
+      if (rawTaskText.length > LARGE_TASK_THRESHOLD && db) {
+        try {
+          const crypto = require('crypto');
+          const { storeChunked } = require('../tools/job_store_tool');
+          const pagedJobId = crypto.randomUUID();
+          const chunkCount = await storeChunked(db, pagedJobId, 'spec', rawTaskText);
+          const pointerObj = { ...subTaskObj };
+          const pointerText = `Your task is large (${rawTaskText.length} chars, ${chunkCount} chunk(s)) and has been staged for paged reading instead of being inlined here. Call the job_store tool's read_spec action with { job_id: "${pagedJobId}", seq: 0 }, then keep incrementing seq while the response's hasMore is true, to read your full task before proceeding.`;
+          if (pointerObj.task) pointerObj.task = pointerText;
+          if (pointerObj.query) pointerObj.query = pointerText;
+          delegateTask = JSON.stringify(pointerObj);
+          onThought(`Task for "${agentName}" is large (${rawTaskText.length} chars) - staged via job_store as job "${pagedJobId}" instead of inlining it.\n`);
+        } catch (err) {
+          onThought(`[Job Store] Failed to page large task, falling back to inlining it: ${err.message}\n`);
+        }
+      }
+
       onThought(`Delegating sub-task to Agent "${agentName}": "${subTask}"...\n`);
       if (onAgentStatus) onAgentStatus({ agent: agentName, status: 'active' });
       try {
-        toolOutput = await runWorkerAgent(agentName, settings, subTask, db, userId, chatId);
+        toolOutput = await runWorkerAgent(agentName, settings, delegateTask, db, userId, chatId);
       } catch (err) {
         try {
           const { broadcastAlert } = require('../routes/alerts');

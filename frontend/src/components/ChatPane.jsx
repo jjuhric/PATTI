@@ -3,6 +3,7 @@ import { Calendar, Search, Send, Square, Cpu, CloudSun, Newspaper, FileText, Vol
 import { marked } from 'marked';
 import mermaid from 'mermaid';
 import ExpandableThoughts from './ExpandableThoughts';
+import BackgroundJobBanner from './BackgroundJobBanner';
 
 mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
 
@@ -66,7 +67,8 @@ export default function ChatPane({
   messagesEndRef,
   handleResolveCommand,
   streamStatus,
-  llmBusy
+  llmBusy,
+  backgroundJob
 }) {
   const [editedCommands, setEditedCommands] = useState({});
   const [pendingAttachments, setPendingAttachments] = useState([]);
@@ -636,6 +638,8 @@ export default function ChatPane({
         </div>
       )}
 
+      <BackgroundJobBanner backgroundJob={backgroundJob} />
+
       <form onSubmit={handleSubmitWithAttachments} className="input-pane">
         <input
           ref={fileInputRef}
@@ -649,7 +653,7 @@ export default function ChatPane({
           type="button"
           className="btn-icon"
           onClick={() => fileInputRef.current && fileInputRef.current.click()}
-          disabled={!activeChatId || isStreaming || isUploading}
+          disabled={!activeChatId || isStreaming || isUploading || !!backgroundJob}
           title="Attach image or document"
         >
           <Paperclip size={18} />
@@ -662,12 +666,13 @@ export default function ChatPane({
               !activeChatId ? "Select or create a chat to begin"
                 : isStreaming ? "AI is thinking..."
                 : llmBusy ? "Host is busy - please wait..."
+                : backgroundJob ? (backgroundJob.label || "PATTI is working in the background - please wait...")
                 : "Send a message..."
             }
             value={inputText}
             onChange={e => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={!activeChatId || isStreaming || llmBusy}
+            disabled={!activeChatId || isStreaming || llmBusy || !!backgroundJob}
           />
         </div>
         {isStreaming ? (
@@ -675,7 +680,7 @@ export default function ChatPane({
             <Square size={18} fill="currentColor" />
           </button>
         ) : (
-          <button type="submit" className="btn-send" disabled={!activeChatId || !inputText.trim() || llmBusy} title={llmBusy ? "Host is busy - please wait" : undefined}>
+          <button type="submit" className="btn-send" disabled={!activeChatId || !inputText.trim() || llmBusy || !!backgroundJob} title={llmBusy ? "Host is busy - please wait" : backgroundJob ? "PATTI is working in the background - please wait" : undefined}>
             <Send size={18} />
           </button>
         )}
