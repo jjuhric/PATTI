@@ -379,10 +379,22 @@ function scanForFakeIndicators(content) {
   return match ? match[0] : null;
 }
 
+// Strips leading/trailing markdown code-fence markers independently rather than requiring
+// a matched pair - a live build showed the model can emit content with only a stray trailing
+// ``` and no opening fence (or vice versa), which a matched-pair-only regex leaves untouched,
+// corrupting the written file (this is exactly how requirements.txt/Cargo.toml ended up with
+// a literal trailing "```" line that broke pip/cargo parsing). Only checks the first/last
+// line specifically, so a legitimate fenced code block in the middle of real file content
+// (e.g. inside a generated README.md) is left alone.
 function stripCodeFence(text) {
-  const trimmed = text.trim();
-  const fenceMatch = trimmed.match(/^```[a-zA-Z0-9]*\n([\s\S]*?)\n```$/);
-  return fenceMatch ? fenceMatch[1] : trimmed;
+  const lines = text.trim().split('\n');
+  if (lines.length > 0 && /^```[a-zA-Z0-9]*$/.test(lines[0].trim())) {
+    lines.shift();
+  }
+  if (lines.length > 0 && /^```$/.test(lines[lines.length - 1].trim())) {
+    lines.pop();
+  }
+  return lines.join('\n').trim();
 }
 
 // Side-effect-free syntax check only (no execution, no install, no running the app) - node
@@ -498,4 +510,4 @@ async function finishJobWithFailure(db, userId, jobId, targetDir, message) {
   }
 }
 
-module.exports = { handleDevProjectTool, RESULTS_CHAT_TITLE, scanForFakeIndicators, interpretQaVerdict };
+module.exports = { handleDevProjectTool, RESULTS_CHAT_TITLE, scanForFakeIndicators, interpretQaVerdict, stripCodeFence };

@@ -17,7 +17,7 @@ jest.mock('../utils/agents', () => ({ runWorkerAgent: (...args) => mockRunWorker
 const mockHandleImageTool = jest.fn();
 jest.mock('../tools/image_tool', () => ({ handleImageTool: (...args) => mockHandleImageTool(...args) }));
 
-const { handleDevProjectTool, RESULTS_CHAT_TITLE, scanForFakeIndicators, interpretQaVerdict } = require('../tools/dev_project_tool');
+const { handleDevProjectTool, RESULTS_CHAT_TITLE, scanForFakeIndicators, interpretQaVerdict, stripCodeFence } = require('../tools/dev_project_tool');
 
 // Each build spawns a real `node --check` subprocess per JS file for syntax verification,
 // which is slower than a plain mocked-fetch unit test, especially on Windows.
@@ -98,6 +98,33 @@ describe('scanForFakeIndicators', () => {
     if (fs.existsSync(avatarPath)) {
       expect(scanForFakeIndicators(fs.readFileSync(avatarPath, 'utf8'))).toBeTruthy();
     }
+  });
+});
+
+describe('stripCodeFence', () => {
+  test('strips a properly matched pair of fences', () => {
+    expect(stripCodeFence('```js\nconsole.log(1);\n```')).toBe('console.log(1);');
+  });
+
+  test('returns plain content unchanged when there is no fence at all', () => {
+    expect(stripCodeFence('requests==2.31.0')).toBe('requests==2.31.0');
+  });
+
+  // The exact real-world bug this fixes: a live build produced requirements.txt/Cargo.toml
+  // content with a stray trailing ``` and no matching opening fence - the old matched-pair-
+  // only regex left it completely untouched, corrupting the file (pip/cargo then failed to
+  // parse it).
+  test('strips a stray trailing fence with no opening fence', () => {
+    expect(stripCodeFence('requests==2.31.0\n```')).toBe('requests==2.31.0');
+  });
+
+  test('strips a stray opening fence with no closing fence', () => {
+    expect(stripCodeFence('```toml\n[package]\nname = "rust_app"')).toBe('[package]\nname = "rust_app"');
+  });
+
+  test('does not touch a legitimate fenced code block in the middle of real content', () => {
+    const readme = '# Title\n\nSome text.\n\n```js\nconsole.log(1);\n```\n\nMore text.';
+    expect(stripCodeFence(readme)).toBe(readme);
   });
 });
 
