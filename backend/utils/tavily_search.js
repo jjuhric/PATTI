@@ -141,6 +141,21 @@ async function getTavilyUsage() {
   }
 }
 
+/**
+ * True once the shared account has used up its Tavily credit allocation, so callers (see
+ * web_search_tool.js) can skip straight to the legacy DuckDuckGo/Google/Wikipedia fallback
+ * chain instead of spending a call that would just fail once credits hit zero. Token usage
+ * already gets this same treatment (quotaMiddleware.js) - search credits previously had no
+ * enforcement at all, just a passive "X/1,000" display. A missing/unknown limit (0, or the
+ * usage fetch itself failing with nothing cached yet) is treated as "not exhausted" - better to
+ * attempt a real search than to silently degrade every query because usage couldn't be read.
+ */
+async function isUsageExhausted() {
+  const usage = await getTavilyUsage();
+  if (!usage || !usage.limit) return false;
+  return usage.used >= usage.limit;
+}
+
 function _resetUsageCacheForTests() {
   usageCache = null;
   usageCacheAt = 0;
@@ -156,6 +171,7 @@ module.exports = {
   tavilySearch,
   getTavilyUsage,
   isConfigured,
+  isUsageExhausted,
   _resetUsageCacheForTests,
   _expireUsageCacheForTests
 };

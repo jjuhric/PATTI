@@ -1,5 +1,5 @@
 const cheerio = require('cheerio');
-const { tavilySearch, isConfigured: isTavilyConfigured } = require('../utils/tavily_search');
+const { tavilySearch, isConfigured: isTavilyConfigured, isUsageExhausted: isTavilyUsageExhausted } = require('../utils/tavily_search');
 
 // Tavily result relevance is scored 0-1 by Tavily itself; below this, a result is noise rather
 // than something worth including - this is the "think through search results" filtering step,
@@ -186,9 +186,10 @@ async function handleWebSearchTool(db, userId, query) {
   }
 
   // Primary search path: Tavily (relevance-scored results, native news mode, no HTML-scraping
-  // fragility). Falls through to the legacy scraping chain below when not configured or when
-  // it genuinely finds nothing relevant.
-  if (isTavilyConfigured()) {
+  // fragility). Falls through to the legacy scraping chain below when not configured, when the
+  // shared account has used up its credit allocation, or when it genuinely finds nothing
+  // relevant.
+  if (isTavilyConfigured() && !(await isTavilyUsageExhausted())) {
     try {
       const report = await searchWithTavily(query, db, userId);
       if (report) return report;
@@ -391,7 +392,7 @@ async function searchWikipedia(query) {
  * @returns {Promise<{engine: 'tavily'|'ddg'|'google'|'wikipedia'|'none', results: Array<{link: string, title: string, snippet: string}>}>}
  */
 async function performWebSearch(query, limit = 5) {
-  if (isTavilyConfigured()) {
+  if (isTavilyConfigured() && !(await isTavilyUsageExhausted())) {
     try {
       const searchResult = await tavilySearch(query, { maxResults: limit, includeAnswer: false });
       if (searchResult && searchResult.results.length > 0) {

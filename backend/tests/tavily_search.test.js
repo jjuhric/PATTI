@@ -2,6 +2,7 @@ const {
   tavilySearch,
   getTavilyUsage,
   isConfigured,
+  isUsageExhausted,
   _resetUsageCacheForTests,
   _expireUsageCacheForTests
 } = require('../utils/tavily_search');
@@ -185,5 +186,37 @@ describe('getTavilyUsage', () => {
     const usage = await getTavilyUsage();
     expect(usage).toEqual({ used: 20, limit: 1000 });
     expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('isUsageExhausted', () => {
+  test('false while used is below limit', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ account: { plan_usage: 500, plan_limit: 1000 } }));
+    expect(await isUsageExhausted()).toBe(false);
+  });
+
+  test('true once used has reached the limit', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ account: { plan_usage: 1000, plan_limit: 1000 } }));
+    expect(await isUsageExhausted()).toBe(true);
+  });
+
+  test('true once used has exceeded the limit', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ account: { plan_usage: 1005, plan_limit: 1000 } }));
+    expect(await isUsageExhausted()).toBe(true);
+  });
+
+  test('false when not configured (getTavilyUsage returns null) - do not block search over an unknown state', async () => {
+    delete process.env.TAVILY_API_KEY;
+    expect(await isUsageExhausted()).toBe(false);
+  });
+
+  test('false when the limit is unknown (0/absent) - never silently degrade every query over an unreadable limit', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({ account: { plan_usage: 0, plan_limit: 0 } }));
+    expect(await isUsageExhausted()).toBe(false);
+  });
+
+  test('false when the usage fetch fails with no prior cached value', async () => {
+    global.fetch.mockResolvedValueOnce(jsonResponse({}, false, 500));
+    expect(await isUsageExhausted()).toBe(false);
   });
 });

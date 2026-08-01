@@ -160,8 +160,6 @@ CREATE TABLE IF NOT EXISTS dev_pipeline (
   status TEXT DEFAULT 'pending',
   dev_agent_output TEXT,
   qa_agent_output TEXT,
-  branch_name TEXT,
-  pr_url TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
