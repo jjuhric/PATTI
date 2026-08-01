@@ -457,6 +457,32 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
     } catch (err) {
       logger.error('Stream processing error in chat route:', err);
       const errMsg = err.message || "Local LLM Connection Lost. The model may have run out of memory. Please lower context length.";
+
+      // A totally-failed turn used to leave zero assistant rows in the DB - the
+      // request just vanished with no trace, matching what the client sees (no
+      // bubble, only a toast that disappears). Persist an honest error message
+      // the same way the abort handler above does, so the failure is a permanent,
+      // visible part of the thread instead of silence.
+      if (!completed) {
+        completed = true;
+        try {
+          let errContent = accumulatedContent.trim();
+          errContent = errContent ? `${errContent}\n\n⚠️ ${errMsg}` : `⚠️ ${errMsg}`;
+
+          const { extractThoughts } = require('../utils/helpers');
+          const parsed = extractThoughts(errContent, accumulatedThoughts);
+          finalContent = parsed.content;
+          finalThoughts = parsed.thoughts;
+
+          await db.run(
+            'INSERT INTO messages (chat_id, role, content, thoughts, is_error) VALUES (?, ?, ?, ?, 1)',
+            [chatId, 'assistant', finalContent, finalThoughts]
+          );
+        } catch (dbErr) {
+          console.error('Failed to save error assistant message:', dbErr);
+        }
+      }
+
       if (!res.headersSent) {
         res.status(500).json({ error: errMsg });
       } else {

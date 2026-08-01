@@ -1,15 +1,79 @@
+/* Theme tokens. Dark is the long-standing default (unconditional :root) so
+   every existing user's appearance is unchanged; light is opt-in, either via
+   the toggle in the sidebar (sets [data-theme]) or an OS light preference
+   when no explicit choice has been made yet. --bg-card/--text-main/--text-muted
+   /--error were already referenced by Toast and the starter chips but were
+   never actually declared anywhere (silently falling back to browser
+   defaults) - defined properly here for both themes. */
 :root {
   --bg-primary: #0b0f19;
   --bg-secondary: rgba(17, 24, 39, 0.7);
   --bg-glass: rgba(17, 24, 39, 0.45);
+  --bg-card: rgba(17, 24, 39, 0.85);
   --border-glass: rgba(255, 255, 255, 0.08);
   --text-primary: #f3f4f6;
+  --text-main: #f3f4f6;
   --text-secondary: #9ca3af;
+  --text-muted: #9ca3af;
   --accent-primary: #8b5cf6;
   --accent-secondary: #06b6d4;
   --accent-green: #10b981;
   --accent-glow: rgba(139, 92, 246, 0.35);
+  --error: #ef4444;
   --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg-primary: #f7f7fb;
+    --bg-secondary: rgba(255, 255, 255, 0.82);
+    --bg-glass: rgba(255, 255, 255, 0.6);
+    --bg-card: rgba(255, 255, 255, 0.94);
+    --border-glass: rgba(15, 23, 42, 0.09);
+    --text-primary: #1a1a2e;
+    --text-main: #1a1a2e;
+    --text-secondary: #5c5f70;
+    --text-muted: #5c5f70;
+    --accent-primary: #7c3aed;
+    --accent-secondary: #0891b2;
+    --accent-green: #059669;
+    --accent-glow: rgba(124, 58, 237, 0.22);
+    --error: #dc2626;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg-primary: #0b0f19;
+  --bg-secondary: rgba(17, 24, 39, 0.7);
+  --bg-glass: rgba(17, 24, 39, 0.45);
+  --bg-card: rgba(17, 24, 39, 0.85);
+  --border-glass: rgba(255, 255, 255, 0.08);
+  --text-primary: #f3f4f6;
+  --text-main: #f3f4f6;
+  --text-secondary: #9ca3af;
+  --text-muted: #9ca3af;
+  --accent-primary: #8b5cf6;
+  --accent-secondary: #06b6d4;
+  --accent-green: #10b981;
+  --accent-glow: rgba(139, 92, 246, 0.35);
+  --error: #ef4444;
+}
+
+:root[data-theme="light"] {
+  --bg-primary: #f7f7fb;
+  --bg-secondary: rgba(255, 255, 255, 0.82);
+  --bg-glass: rgba(255, 255, 255, 0.6);
+  --bg-card: rgba(255, 255, 255, 0.94);
+  --border-glass: rgba(15, 23, 42, 0.09);
+  --text-primary: #1a1a2e;
+  --text-main: #1a1a2e;
+  --text-secondary: #5c5f70;
+  --text-muted: #5c5f70;
+  --accent-primary: #7c3aed;
+  --accent-secondary: #0891b2;
+  --accent-green: #059669;
+  --accent-glow: rgba(124, 58, 237, 0.22);
+  --error: #dc2626;
 }
 
 * {
@@ -494,6 +558,16 @@ select.form-control option {
   border-bottom-left-radius: 4px;
 }
 
+/* A failed turn (R1/E2) - same color language as .error-banner, so a failure
+   reads the same whether it happened before or after a response started.
+   Matches .assistant .message-bubble's specificity (two classes) so source
+   order alone decides the cascade instead of needing !important. */
+.message-bubble.message-bubble-error {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+
 /* Markdown parsing output adjustments */
 .message-bubble p {
   margin-bottom: 12px;
@@ -737,6 +811,38 @@ select.form-control option {
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* Live per-part checklist for a multi-part request (E1) - always visible while
+   streaming, unlike the collapsed Internal Thoughts panel, so a request that
+   can take many minutes still visibly shows "some parts are already done". */
+.subtask-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 8px;
+  font-size: 0.85rem;
+}
+
+.subtask-progress-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-glass);
+  color: var(--text-secondary);
+}
+
+.subtask-progress-item.done {
+  color: var(--accent-green);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.subtask-progress-item.error {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.3);
 }
 
 /* Mobile menu button toggle base style (hidden on desktop) */

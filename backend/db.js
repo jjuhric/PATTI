@@ -62,15 +62,6 @@ async function getDb() {
     if (!columns.some(col => col.name === 'briefing_hour')) {
       await dbConnection.run("ALTER TABLE users ADD COLUMN briefing_hour INTEGER DEFAULT 7");
     }
-    if (!columns.some(col => col.name === 'dob')) {
-      await dbConnection.run("ALTER TABLE users ADD COLUMN dob TEXT");
-    }
-    if (!columns.some(col => col.name === 'gender')) {
-      await dbConnection.run("ALTER TABLE users ADD COLUMN gender TEXT");
-    }
-    if (!columns.some(col => col.name === 'political_leaning')) {
-      await dbConnection.run("ALTER TABLE users ADD COLUMN political_leaning TEXT DEFAULT 'Undecided'");
-    }
     if (!columns.some(col => col.name === 'interests')) {
       await dbConnection.run("ALTER TABLE users ADD COLUMN interests TEXT DEFAULT '[]'");
     }
@@ -138,6 +129,13 @@ async function getDb() {
     }
     if (!settingsColumns.some(col => col.name === 'voice_mode')) {
       await dbConnection.run("ALTER TABLE user_settings ADD COLUMN voice_mode INTEGER DEFAULT 0");
+    }
+
+    // Migrate messages to add is_error column if missing (marks a persisted
+    // assistant message as recording a failed turn - see routes/chat.js)
+    const messagesColumns = await dbConnection.all('PRAGMA table_info(messages)');
+    if (!messagesColumns.some(col => col.name === 'is_error')) {
+      await dbConnection.run('ALTER TABLE messages ADD COLUMN is_error INTEGER DEFAULT 0');
     }
 
     // Migrate memories to add embedding column if missing

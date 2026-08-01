@@ -149,7 +149,7 @@ export default function AgentDashboard({ nodes = [], token, handleDeleteNode, on
                           </span>
                         </td>
                         <td className="text-right">
-                          <button className="btn btn-ghost btn-sm text-error" onClick={() => handleDeleteNode(node.id)}>
+                          <button className="btn btn-ghost btn-sm text-error" onClick={() => handleDeleteNode(node.id)} aria-label={`Delete node ${node.node_name}`}>
                             <Trash2 size={16} />
                           </button>
                         </td>

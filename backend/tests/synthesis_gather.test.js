@@ -6,8 +6,61 @@ jest.mock('../utils/agents', () => ({
 const {
   runSynthesisGatherLoop,
   buildFallbackDataBlock,
+  buildDataBlock,
   SYNTHESIS_GATHER_AGGREGATE_CAP
 } = require('../services/synthesis_gather');
+
+describe('buildDataBlock', () => {
+  test('returns DATA_AVAILABLE: no for an empty source list', () => {
+    expect(buildDataBlock([])).toBe('DATA_AVAILABLE: no');
+    expect(buildDataBlock(null)).toBe('DATA_AVAILABLE: no');
+  });
+
+  test('includes a SOURCE CHECKLIST enumerating SUCCEEDED/FAILED per source', () => {
+    const block = buildDataBlock([
+      { agent_name: 'news_agent', task_label: 'general news', status: 'error', content: 'fetch failed' },
+      { agent_name: 'weather_expert', task_label: 'weather', status: 'done', content: 'Sunny, 75F.' },
+      { agent_name: 'sports_agent', task_label: 'Dallas Cowboys', status: 'done', content: 'Cowboys won.' }
+    ]);
+
+    expect(block).toContain('SOURCE CHECKLIST');
+    expect(block).toContain('news_agent (general news): FAILED');
+    expect(block).toContain('weather_expert (weather): SUCCEEDED');
+    expect(block).toContain('sports_agent (Dallas Cowboys): SUCCEEDED');
+    // The actual weather content must still be present, not just referenced in the checklist.
+    expect(block).toContain('Sunny, 75F.');
+  });
+
+  test('orders successful sources before failed ones, regardless of input order', () => {
+    const block = buildDataBlock([
+      { agent_name: 'news_agent', task_label: 'general news', status: 'error', content: 'fetch failed' },
+      { agent_name: 'weather_expert', task_label: 'weather', status: 'done', content: 'Sunny, 75F.' },
+      { agent_name: 'sports_agent', task_label: 'Dallas Cowboys', status: 'done', content: 'Cowboys won.' }
+    ]);
+
+    const weatherIdx = block.indexOf('weather_expert');
+    const sportsIdx = block.indexOf('sports_agent');
+    const newsIdx = block.lastIndexOf('news_agent'); // last occurrence = its source block, not just the checklist line
+
+    expect(weatherIdx).toBeGreaterThan(-1);
+    expect(sportsIdx).toBeGreaterThan(-1);
+    expect(weatherIdx).toBeLessThan(newsIdx);
+    expect(sportsIdx).toBeLessThan(newsIdx);
+  });
+
+  test('preserves relative order within the success group and within the failure group', () => {
+    const block = buildDataBlock([
+      { agent_name: 'agent_a', status: 'done', content: 'a' },
+      { agent_name: 'agent_b', status: 'error', content: 'b' },
+      { agent_name: 'agent_c', status: 'done', content: 'c' },
+      { agent_name: 'agent_d', status: 'error', content: 'd' }
+    ]);
+
+    const checklistSection = block.split('\n\n')[0];
+    const order = ['agent_a', 'agent_c', 'agent_b', 'agent_d'].map(name => checklistSection.indexOf(name));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+});
 
 describe('Synthesis Gather Loop', () => {
   let db;

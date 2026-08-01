@@ -80,9 +80,6 @@ describe('Profile Router Tests', () => {
       country: 'US',
       temp_unit: 'imperial',
       weather_api_key: null,
-      dob: null,
-      gender: null,
-      political_leaning: 'Undecided',
       interests: [],
       favorite_teams: []
     });
@@ -95,9 +92,6 @@ describe('Profile Router Tests', () => {
       country: 'CA',
       temp_unit: 'metric',
       weather_api_key: 'apikey123',
-      dob: '1990-01-01',
-      gender: 'Male',
-      political_leaning: 'Democrat',
       interests: ['Artificial Intelligence', 'Cycling'],
       favorite_teams: ['Dallas Cowboys', 'Texas Rangers']
     };
@@ -121,9 +115,6 @@ describe('Profile Router Tests', () => {
     expect(getRes.body.country).toBe(payload.country);
     expect(getRes.body.temp_unit).toBe(payload.temp_unit);
     expect(getRes.body.weather_api_key).toBe('apik••••••••y123');
-    expect(getRes.body.dob).toBe(payload.dob);
-    expect(getRes.body.gender).toBe(payload.gender);
-    expect(getRes.body.political_leaning).toBe(payload.political_leaning);
     expect(getRes.body.interests).toEqual(payload.interests);
     expect(getRes.body.favorite_teams).toEqual(payload.favorite_teams);
   });
@@ -137,9 +128,6 @@ describe('Profile Router Tests', () => {
       // Simulates a copy-paste artifact (trailing newline/spaces) -- an
       // untrimmed key like this silently fails OpenWeatherMap auth later.
       weather_api_key: '  apikey123  \n',
-      dob: '1990-01-01',
-      gender: 'Male',
-      political_leaning: 'Democrat',
       interests: [],
       favorite_teams: []
     };

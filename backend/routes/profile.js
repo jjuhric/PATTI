@@ -6,7 +6,7 @@ const { authenticateToken } = require('../middleware/auth');
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const db = await getDb();
-    const user = await db.get('SELECT name, zipcode, country, temp_unit, weather_api_key, dob, gender, political_leaning, interests, favorite_teams FROM users WHERE id = ?', [req.user.id]);
+    const user = await db.get('SELECT name, zipcode, country, temp_unit, weather_api_key, interests, favorite_teams FROM users WHERE id = ?', [req.user.id]);
     
     if (user) {
       const { decrypt } = require('../utils/crypto');
@@ -29,14 +29,14 @@ router.get('/', authenticateToken, async (req, res) => {
       }
     }
 
-    res.json(user || { name: '', zipcode: '', country: 'US', temp_unit: 'imperial', weather_api_key: '', dob: '', gender: '', political_leaning: 'Undecided', interests: [], favorite_teams: [] });
+    res.json(user || { name: '', zipcode: '', country: 'US', temp_unit: 'imperial', weather_api_key: '', interests: [], favorite_teams: [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 router.put('/', authenticateToken, async (req, res) => {
-  const { name, zipcode, country, temp_unit, weather_api_key, dob, gender, political_leaning, interests, favorite_teams } = req.body;
+  const { name, zipcode, country, temp_unit, weather_api_key, interests, favorite_teams } = req.body;
   try {
     const db = await getDb();
     const { encrypt } = require('../utils/crypto');
@@ -56,8 +56,8 @@ router.put('/', authenticateToken, async (req, res) => {
     const favoriteTeamsString = JSON.stringify(favorite_teams || []);
 
     await db.run(
-      `UPDATE users SET name = ?, zipcode = ?, country = ?, temp_unit = ?, weather_api_key = ?, dob = ?, gender = ?, political_leaning = ?, interests = ?, favorite_teams = ? WHERE id = ?`,
-      [name || '', zipcode || '', country || 'US', temp_unit || 'imperial', finalWeatherKey, dob || '', gender || '', political_leaning || 'Undecided', interestsString, favoriteTeamsString, req.user.id]
+      `UPDATE users SET name = ?, zipcode = ?, country = ?, temp_unit = ?, weather_api_key = ?, interests = ?, favorite_teams = ? WHERE id = ?`,
+      [name || '', zipcode || '', country || 'US', temp_unit || 'imperial', finalWeatherKey, interestsString, favoriteTeamsString, req.user.id]
     );
     res.json({ success: true, message: 'Profile updated successfully.' });
   } catch (err) {

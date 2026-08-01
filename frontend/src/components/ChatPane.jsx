@@ -60,6 +60,7 @@ export default function ChatPane({
   streamThoughts,
   streamContent,
   toolLogs,
+  subtaskProgress,
   inputText,
   setInputText,
   handleSendMessage,
@@ -361,6 +362,7 @@ export default function ChatPane({
             onClick={toggleVoiceEnabled}
             className="btn-icon"
             title={voiceEnabled ? "Mute Voice Response" : "Unmute Voice Response"}
+            aria-pressed={voiceEnabled}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -443,8 +445,10 @@ export default function ChatPane({
           )
         )}
         
-        {messages.map(msg => (
-          <div key={msg.id} className={`message-bubble-wrapper ${msg.role}`}>
+        {messages.map(msg => {
+          const isError = !!(msg.is_error || msg.isError);
+          return (
+          <div key={msg.id} className={`message-bubble-wrapper ${msg.role}${isError ? ' error' : ''}`}>
             {msg.thoughts && <ExpandableThoughts thoughts={msg.thoughts} />}
             {msg.attachments && msg.attachments.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', margin: '4px 0' }}>
@@ -469,17 +473,27 @@ export default function ChatPane({
             )}
             {msg.content && msg.content.trim() !== '' && (
               <div
-                className="message-bubble"
+                className={`message-bubble${isError ? ' message-bubble-error' : ''}`}
                 dangerouslySetInnerHTML={{ __html: marked.parse(msg.content) }}
               />
             )}
           </div>
-        ))}
+          );
+        })}
 
         {/* Streaming Content indicators */}
         {isStreaming && (
           <div className="message-bubble-wrapper assistant">
             {streamThoughts && <ExpandableThoughts thoughts={streamThoughts} defaultExpanded={true} />}
+            {subtaskProgress && subtaskProgress.length > 0 && (
+              <div className="subtask-progress" role="status">
+                {subtaskProgress.map((part, idx) => (
+                  <span key={idx} className={`subtask-progress-item ${part.status}`}>
+                    {part.label} {part.status === 'error' ? '✗' : '✓'}
+                  </span>
+                ))}
+              </div>
+            )}
             {toolLogs.map((log, idx) => {
               if (log.type === 'command_approval') {
                 const currentCmd = editedCommands[log.commandId] !== undefined ? editedCommands[log.commandId] : log.command;
@@ -630,6 +644,7 @@ export default function ChatPane({
                 onClick={() => handleRemoveAttachment(att.id)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', padding: 0 }}
                 title="Remove attachment"
+                aria-label={`Remove attachment ${att.filename}`}
               >
                 <X size={14} />
               </button>
@@ -655,6 +670,7 @@ export default function ChatPane({
           onClick={() => fileInputRef.current && fileInputRef.current.click()}
           disabled={!activeChatId || isStreaming || isUploading || !!backgroundJob}
           title="Attach image or document"
+          aria-label="Attach image or document"
         >
           <Paperclip size={18} />
         </button>
@@ -676,11 +692,11 @@ export default function ChatPane({
           />
         </div>
         {isStreaming ? (
-          <button type="button" className="btn-stop" onClick={handleStop} title="Stop generating">
+          <button type="button" className="btn-stop" onClick={handleStop} title="Stop generating" aria-label="Stop generating">
             <Square size={18} fill="currentColor" />
           </button>
         ) : (
-          <button type="submit" className="btn-send" disabled={!activeChatId || !inputText.trim() || llmBusy || !!backgroundJob} title={llmBusy ? "Host is busy - please wait" : backgroundJob ? "PATTI is working in the background - please wait" : undefined}>
+          <button type="submit" className="btn-send" disabled={!activeChatId || !inputText.trim() || llmBusy || !!backgroundJob} title={llmBusy ? "Host is busy - please wait" : backgroundJob ? "PATTI is working in the background - please wait" : undefined} aria-label="Send message">
             <Send size={18} />
           </button>
         )}

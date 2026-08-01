@@ -482,16 +482,13 @@ ${toolOutput}
   // Fetch user profile details
   let profileContext = '';
   try {
-    const profile = await db.get('SELECT name, zipcode, country, temp_unit, dob, gender, political_leaning, interests FROM users WHERE id = ?', [userId]);
+    const profile = await db.get('SELECT name, zipcode, country, temp_unit, interests FROM users WHERE id = ?', [userId]);
     if (profile) {
       profileContext = `### User Profile Details:
 - Profile Name: ${profile.name || 'Not set'}
 - Profile Zipcode: ${profile.zipcode || 'Not set'}
 - Profile Country: ${profile.country || 'US'}
 - Profile Temp Unit: ${profile.temp_unit || 'imperial'}
-- Date of Birth (DOB): ${profile.dob || 'Not set'}
-- Gender: ${profile.gender || 'Not set'}
-- Political Leaning: ${profile.political_leaning || 'Undecided'}
 - Specific Interests: ${profile.interests || '[]'}`;
     }
   } catch (err) {
@@ -577,9 +574,9 @@ ${toolOutput}
     let profileDetailsText = '';
     if (!isAgentInfo) {
       try {
-        const profile = await db.get('SELECT name, zipcode, country, temp_unit, dob, gender, political_leaning, interests FROM users WHERE id = ?', [userId]);
+        const profile = await db.get('SELECT name, zipcode, country, temp_unit, interests FROM users WHERE id = ?', [userId]);
         if (profile) {
-          profileDetailsText = `\n\n### User Profile Details:\n- Name: ${profile.name || 'Not set'}\n- Zipcode: ${profile.zipcode || 'Not set'}\n- Country: ${profile.country || 'US'}\n- Temp Unit: ${profile.temp_unit || 'imperial'}\n- Date of Birth (DOB): ${profile.dob || 'Not set'}\n- Gender: ${profile.gender || 'Not set'}\n- Political Leaning: ${profile.political_leaning || 'Not set'}\n- Interests: ${profile.interests || '[]'}`;
+          profileDetailsText = `\n\n### User Profile Details:\n- Name: ${profile.name || 'Not set'}\n- Zipcode: ${profile.zipcode || 'Not set'}\n- Country: ${profile.country || 'US'}\n- Temp Unit: ${profile.temp_unit || 'imperial'}\n- Interests: ${profile.interests || '[]'}`;
         }
       } catch (profileErr) {
         console.error('Failed to get user profile details for intercept:', profileErr);
@@ -1271,6 +1268,17 @@ If no changes are required and you can proceed without executing the code, then 
       console.error('Failed to persist subtask result to scratchpad:', dbErr);
     }
 
+    // A second, distinct onToolCall for this same tool - the first (above, at
+    // dispatch) has no `status`; this one always does, so the frontend can tell
+    // "just started" from "just finished" and render a live per-part checklist
+    // instead of only the collapsed internal-thoughts log for a request that can
+    // take many minutes.
+    onToolCall({
+      tool: decision.tool,
+      label: delegatedAgentName || taskLabelForStore || decision.tool,
+      status: isErrorResult ? 'error' : 'done'
+    });
+
     currentHistory.push({
       role: 'assistant',
       content: `Thought: ${decision.thought}\nCalling tool: ${decision.tool} with parameters: ${JSON.stringify(decision.params)}`
@@ -1325,7 +1333,7 @@ Make sure to answer the user query directly and clearly.`;
     // tool (see backend/services/synthesis_gather.js) and a bounded number of turns to pull only
     // what it needs, with a hard aggregate cap so the eventual prompt size is always bounded
     // regardless of how many parts were requested.
-    const { runSynthesisGatherLoop, buildFallbackDataBlock, SYNTHESIS_GATHER_THRESHOLD_CHARS, SYNTHESIS_GATHER_AGGREGATE_CAP } = require('./synthesis_gather');
+    const { runSynthesisGatherLoop, buildFallbackDataBlock, buildDataBlock, SYNTHESIS_GATHER_THRESHOLD_CHARS, SYNTHESIS_GATHER_AGGREGATE_CAP } = require('./synthesis_gather');
     let hasResults = accumulatedToolOutputs.length > 0;
     let dataBlock = 'DATA_AVAILABLE: no';
     try {
@@ -1341,7 +1349,7 @@ Make sure to answer the user query directly and clearly.`;
             'SELECT agent_name, task_label, result_text, status FROM subtask_results WHERE request_id = ? ORDER BY id',
             [requestId]
           );
-          dataBlock = `DATA_AVAILABLE: yes\n${subtaskRows.map(r => `--- [Source: ${r.agent_name}${r.task_label ? ` - ${r.task_label}` : ''}${r.status === 'error' ? ' - ERRORED' : ''}] ---\n${r.result_text}`).join('\n\n')}`;
+          dataBlock = buildDataBlock(subtaskRows.map(r => ({ agent_name: r.agent_name, task_label: r.task_label, status: r.status, content: r.result_text })));
         } else {
           onThought(`Synthesis data is large (${totalLen} chars across ${metaRows.length} result(s)) - reading it via bounded gather-loop instead of inlining directly.\n`);
           try {
@@ -1378,6 +1386,7 @@ ${mode2SystemPrompt}${activePersonalityPrompt}
 - CRITICAL: Trust the "DATA_AVAILABLE" flag above exactly as given - do not second-guess or re-derive it.
   - If DATA_AVAILABLE is "yes": the content below it is real, already-gathered results. Use it directly to answer. Do NOT claim the information is missing, unavailable, or still being gathered. Do NOT ask the user for details (like a zipcode or a name) that already appear in the DATA above - if it's there, use it.
   - If DATA_AVAILABLE is "no": no data was gathered. Say so plainly instead of fabricating a status update. Never describe an action as "in progress", "being processed", "underway", or "will be provided shortly".
+- CRITICAL: If a SOURCE CHECKLIST appears in the DATA above, your response MUST address every single source listed in it. A source marked SUCCEEDED must be reported using its actual data - never described as missing, unavailable, or still being gathered just because another source on the checklist FAILED.
 - If you need to reason before answering, wrap ALL of it inside <think> and </think> tags with nothing else outside those tags besides your final answer - for example: <think>your thoughts here</think>your final response here. Do NOT narrate your reasoning, rules, self-doubt, or operating mode outside the <think> tags (no "wait", "let me reconsider", "self-correction", or similar visible in the response) - the visible response must begin immediately with the real answer to the user, never with a description of what you are about to do. Keep any reasoning brief and decisive - do not go back and forth.
 - Present a clear, well-organized, professional final response containing ALL relevant details from the DATA above. Use images (markdown \`![alt](url)\`) or a \`\`\`mermaid diagram where they genuinely help; use an emoji only when it's topically relevant to the content, never as decoration.
 - Here is the user request: "${userMessage}".
