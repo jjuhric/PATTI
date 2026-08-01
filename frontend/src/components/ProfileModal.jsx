@@ -18,9 +18,6 @@ export default function ProfileModal({
     country: 'US',
     temp_unit: 'imperial',
     weather_api_key: '',
-    dob: '',
-    gender: '',
-    political_leaning: 'Undecided',
     interests: [],
     favorite_teams: []
   });
@@ -40,9 +37,6 @@ export default function ProfileModal({
         country: profile.country || 'US',
         temp_unit: profile.temp_unit || 'imperial',
         weather_api_key: profile.weather_api_key || '',
-        dob: profile.dob || '',
-        gender: profile.gender || '',
-        political_leaning: profile.political_leaning || 'Undecided',
         interests: Array.isArray(profile.interests) ? profile.interests : [],
         favorite_teams: Array.isArray(profile.favorite_teams) ? profile.favorite_teams : []
       });
@@ -304,45 +298,6 @@ export default function ProfileModal({
 
           {activeTab === 'personal' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div className="form-group" style={{ margin: 0 }}>
-                <label>Date of Birth (Optional)</label>
-                <input 
-                  type="date" 
-                  className="form-control" 
-                  value={formData.dob}
-                  onChange={e => setFormData(prev => ({ ...prev, dob: e.target.value }))}
-                />
-              </div>
-
-              <div className="form-group" style={{ margin: 0 }}>
-                <label>Gender (Optional)</label>
-                <select 
-                  className="form-control"
-                  value={formData.gender}
-                  onChange={e => setFormData(prev => ({ ...prev, gender: e.target.value }))}
-                >
-                  <option value="">Select Gender</option>
-                  <option value="Male">Male</option>
-                  <option value="Female">Female</option>
-                  <option value="Non-Binary">Non-Binary</option>
-                  <option value="Other">Other</option>
-                  <option value="Prefer not to say">Prefer not to say</option>
-                </select>
-              </div>
-
-              <div className="form-group" style={{ margin: 0 }}>
-                <label>Political Leaning</label>
-                <select 
-                  className="form-control"
-                  value={formData.political_leaning}
-                  onChange={e => setFormData(prev => ({ ...prev, political_leaning: e.target.value }))}
-                >
-                  <option value="Undecided">Undecided</option>
-                  <option value="Republican">Republican</option>
-                  <option value="Democrat">Democrat</option>
-                </select>
-              </div>
-
               <div className="form-group" style={{ margin: 0 }}>
                 <label>Interests List</label>
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>

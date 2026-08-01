@@ -20,6 +20,46 @@ function formatSourceBlock(agentName, taskLabel, status, content) {
 }
 
 /**
+ * Assembles the full "DATA_AVAILABLE: yes" block from a list of sources, always led
+ * by a code-computed SOURCE CHECKLIST. A DATA_AVAILABLE flag alone wasn't enough to
+ * stop a smaller/quantized local model from occasionally ignoring a successful result
+ * sitting right there in the prompt (observed: weather_expert succeeded and was fully
+ * present in a 3-source prompt, but the final answer still claimed weather "was not
+ * available" - the model latched onto the one ERRORED source and generalized from it).
+ * An explicit per-source list the model must check off is a much harder thing for it
+ * to silently skip than a paragraph of prose data.
+ *
+ * Successful sources are also ordered before errored ones, so the model reads
+ * everything that worked before it has to acknowledge anything that didn't.
+ *
+ * @param {Array<{agent_name: string, task_label?: string, status: string, content: string}>} sources
+ * @returns {string}
+ */
+function buildDataBlock(sources) {
+  if (!sources || sources.length === 0) {
+    return 'DATA_AVAILABLE: no';
+  }
+
+  const ordered = [...sources].sort((a, b) => {
+    const aFailed = a.status === 'error' ? 1 : 0;
+    const bFailed = b.status === 'error' ? 1 : 0;
+    return aFailed - bFailed;
+  });
+
+  const checklist = ordered
+    .map((s, i) => `${i + 1}. ${s.agent_name}${s.task_label ? ` (${s.task_label})` : ''}: ${s.status === 'error' ? 'FAILED' : 'SUCCEEDED'}`)
+    .join('\n');
+
+  const blocks = ordered.map(s => formatSourceBlock(s.agent_name, s.task_label, s.status, s.content)).join('\n\n');
+
+  return `DATA_AVAILABLE: yes
+SOURCE CHECKLIST (computed automatically - address EVERY one of these in your response; a source marked SUCCEEDED must never be reported as missing, unavailable, or still being gathered):
+${checklist}
+
+${blocks}`;
+}
+
+/**
  * Same full-text concatenation the fast path uses, but hard-capped to `cap`
  * characters total. Used as the safety-net output whenever the gather loop
  * itself fails or a DB read fails - every failure mode still produces a
@@ -33,7 +73,7 @@ async function buildFallbackDataBlock(db, requestId, cap = SYNTHESIS_GATHER_AGGR
   if (!rows || rows.length === 0) {
     return 'DATA_AVAILABLE: no';
   }
-  let block = `DATA_AVAILABLE: yes\n${rows.map(r => formatSourceBlock(r.agent_name, r.task_label, r.status, r.result_text)).join('\n\n')}`;
+  let block = buildDataBlock(rows.map(r => ({ agent_name: r.agent_name, task_label: r.task_label, status: r.status, content: r.result_text })));
   if (block.length > cap) {
     block = block.slice(0, cap) + '\n... [TRUNCATED: Response too large for context]';
   }
@@ -175,12 +215,13 @@ Read whichever of these you need with {"tool": "task_result", "action": "read", 
     return buildFallbackDataBlock(db, requestId, SYNTHESIS_GATHER_AGGREGATE_CAP);
   }
 
-  return `DATA_AVAILABLE: yes\n${collected.map(r => formatSourceBlock(r.agent_name, r.task_label, r.status, r.content)).join('\n\n')}`;
+  return buildDataBlock(collected);
 }
 
 module.exports = {
   runSynthesisGatherLoop,
   buildFallbackDataBlock,
+  buildDataBlock,
   SYNTHESIS_GATHER_THRESHOLD_CHARS,
   SYNTHESIS_GATHER_AGGREGATE_CAP
 };

@@ -42,17 +42,22 @@ let timerId = null;
 async function checkAndRunResearch() {
   if (isRunning) return;
   isRunning = true;
+  // Every early-return branch below only records how long to wait before the next
+  // check - the actual (single) setTimeout call happens once, in `finally`. Scheduling
+  // it at each early-return site too (as this used to do) doesn't get cancelled by
+  // reassigning `timerId` afterward - the earlier timer is still live, so every one of
+  // these branches ended up scheduling TWO checkAndRunResearch calls 30(or 5) minutes
+  // later instead of one, doubling the number of live timers roughly every cycle.
+  let nextDelayMs = 30 * 60 * 1000;
 
   try {
     const db = await getDb();
-    
+
     // Check if current hour is between 12 AM and 5 AM local time
     const currentHour = new Date().getHours();
     const isTimeWindow = currentHour >= 0 && currentHour < 5;
     if (!isTimeWindow) {
       logger.info(`[Research Daemon] Outside of 12 AM - 5 AM research window (current hour: ${currentHour}). Skipping.`);
-      isRunning = false;
-      timerId = setTimeout(checkAndRunResearch, 30 * 60 * 1000);
       return;
     }
 
@@ -60,21 +65,18 @@ async function checkAndRunResearch() {
     const isModelIdle = (global.activeAgentOps || 0) === 0;
     if (!isModelIdle) {
       logger.info('[Research Daemon] Model is actively processing another operation. Deferring research run.');
-      isRunning = false;
-      timerId = setTimeout(checkAndRunResearch, 5 * 60 * 1000);
+      nextDelayMs = 5 * 60 * 1000;
       return;
     }
-    
+
     // Check last update timestamp to ensure we only run once per day
     const lastUpdate = await db.get('SELECT MAX(query_date) as last_run FROM coding_language_updates');
     const eighteenHoursAgo = Date.now() - (18 * 60 * 60 * 1000);
-    
+
     if (lastUpdate && lastUpdate.last_run) {
       const lastRunMs = new Date(lastUpdate.last_run + 'Z').getTime();
       if (lastRunMs > eighteenHoursAgo) {
         logger.info(`[Research Daemon] Already ran daily research recently (last run: ${lastUpdate.last_run}). Skipping check.`);
-        isRunning = false;
-        timerId = setTimeout(checkAndRunResearch, 30 * 60 * 1000);
         return;
       }
     }
@@ -85,16 +87,14 @@ async function checkAndRunResearch() {
     const dbSettings = await db.get('SELECT * FROM user_settings LIMIT 1');
     if (!dbSettings) {
       logger.warn('[Research Daemon] User settings not found. Delaying research.');
-      isRunning = false;
-      timerId = setTimeout(checkAndRunResearch, 5 * 60 * 1000); // retry in 5 min
+      nextDelayMs = 5 * 60 * 1000; // retry in 5 min
       return;
     }
 
     const firstUser = await db.get('SELECT id FROM users ORDER BY id ASC LIMIT 1');
     if (!firstUser) {
       logger.warn('[Research Daemon] User not found. Delaying research.');
-      isRunning = false;
-      timerId = setTimeout(checkAndRunResearch, 5 * 60 * 1000);
+      nextDelayMs = 5 * 60 * 1000;
       return;
     }
 
@@ -151,8 +151,7 @@ async function checkAndRunResearch() {
     logger.error('[Research Daemon] Background research job failed: ' + err.message);
   } finally {
     isRunning = false;
-    // Schedule next check in 30 minutes
-    timerId = setTimeout(checkAndRunResearch, 30 * 60 * 1000);
+    timerId = setTimeout(checkAndRunResearch, nextDelayMs);
   }
 }
 

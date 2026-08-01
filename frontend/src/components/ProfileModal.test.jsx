@@ -84,9 +84,6 @@ describe('ProfileModal Component Tests', () => {
       country: 'GB',
       temp_unit: 'metric',
       weather_api_key: 'new_key',
-      dob: '',
-      gender: '',
-      political_leaning: 'Undecided',
       interests: [],
       favorite_teams: []
     });
@@ -274,20 +271,17 @@ describe('ProfileModal Component Tests', () => {
     }));
   });
 
-  test('handles personalization tab inputs and interactive interest lists', () => {
+  test('handles personalization tab interactive interest lists', () => {
     const mockSaveProfile = vi.fn();
     render(
-      <ProfileModal 
-        isProfileOpen={true} 
-        setIsProfileOpen={vi.fn()} 
+      <ProfileModal
+        isProfileOpen={true}
+        setIsProfileOpen={vi.fn()}
         profile={{
           ...defaultProfile,
-          dob: '1990-05-15',
-          gender: 'Female',
-          political_leaning: 'Democrat',
           interests: ['AI']
-        }} 
-        saveProfile={mockSaveProfile} 
+        }}
+        saveProfile={mockSaveProfile}
       />
     );
 
@@ -295,15 +289,7 @@ describe('ProfileModal Component Tests', () => {
     fireEvent.click(screen.getByText('Personalization'));
 
     // Check pre-populated data
-    expect(screen.getByDisplayValue('1990-05-15')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Female')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Democrat')).toBeInTheDocument();
     expect(screen.getByText('AI')).toBeInTheDocument();
-
-    // Trigger change events to cover onChange branches
-    fireEvent.change(screen.getByDisplayValue('1990-05-15'), { target: { value: '1995-10-10' } });
-    fireEvent.change(screen.getByDisplayValue('Female'), { target: { value: 'Male' } });
-    fireEvent.change(screen.getByDisplayValue('Democrat'), { target: { value: 'Republican' } });
 
     // Add duplicate interest to cover duplicate check (lines 80-83)
     const interestInput = screen.getByPlaceholderText('Add an interest (e.g. AI News, Cycling)');
@@ -324,9 +310,6 @@ describe('ProfileModal Component Tests', () => {
     // Save profile
     fireEvent.click(screen.getByText('Save Profile'));
     expect(mockSaveProfile).toHaveBeenCalledWith(expect.objectContaining({
-      dob: '1995-10-10',
-      gender: 'Male',
-      political_leaning: 'Republican',
       interests: ['Baking']
     }));
   });

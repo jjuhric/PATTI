@@ -414,7 +414,7 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
     if (db && userId) {
       try {
         const profile = await db.get(
-          'SELECT name, zipcode, country, temp_unit, dob, gender, political_leaning, interests FROM users WHERE id = ?',
+          'SELECT name, zipcode, country, temp_unit, interests FROM users WHERE id = ?',
           [userId]
         );
         if (profile) {
@@ -430,9 +430,6 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
 
           const needsPersonalDetails = ['web_searcher', 'memory_agent', 'news_agent'].includes(targetAgent);
           if (needsPersonalDetails) {
-            systemPrompt += `\n- Date of Birth (DOB): ${profile.dob || 'Not set'}`;
-            systemPrompt += `\n- Gender: ${profile.gender || 'Not set'}`;
-            systemPrompt += `\n- Political Leaning: ${profile.political_leaning || 'Undecided'}`;
             systemPrompt += `\n- Specific Interests: ${profile.interests || '[]'}`;
           }
         }

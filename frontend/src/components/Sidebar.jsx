@@ -1,5 +1,5 @@
 import React from 'react';
-import { MessageSquare, Plus, Edit2, X, Calendar, Settings, LogOut, Brain, Network, Send, Sliders, ShieldCheck } from 'lucide-react';
+import { MessageSquare, Plus, Edit2, X, Calendar, Settings, LogOut, Brain, Network, Send, Sliders, ShieldCheck, Sun, Moon } from 'lucide-react';
 
 export default function Sidebar({
   user,
@@ -21,8 +21,11 @@ export default function Sidebar({
   setIsSettingsOpen,
   setIsProfileOpen,
   setIsEsp32ModalOpen,
-  appVersion
+  appVersion,
+  theme,
+  toggleTheme
 }) {
+  const isLight = theme === 'light' || (!theme && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
   return (
     <aside className={`sidebar ${isMobileSidebarOpen ? 'mobile-open' : ''}`}>
       <div className="sidebar-header">
@@ -55,11 +58,23 @@ export default function Sidebar({
 
       <nav className="chat-list">
         {chats.map(chat => (
-          <div 
-            key={chat.id} 
+          <div
+            key={chat.id}
             className={`chat-item ${activeChatId === chat.id ? 'active' : ''}`}
+            role="button"
+            tabIndex={0}
+            aria-current={activeChatId === chat.id ? 'true' : undefined}
+            aria-label={`Open chat "${chat.title}"`}
             onClick={() => {
               if (editingChatId !== chat.id) {
+                setActiveChatId(chat.id);
+                setActiveTab('chat');
+                setIsMobileSidebarOpen(false);
+              }
+            }}
+            onKeyDown={(e) => {
+              if ((e.key === 'Enter' || e.key === ' ') && editingChatId !== chat.id) {
+                e.preventDefault();
                 setActiveChatId(chat.id);
                 setActiveTab('chat');
                 setIsMobileSidebarOpen(false);
@@ -97,19 +112,21 @@ export default function Sidebar({
                   {chat.title}
                 </span>
                 <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                  <button 
+                  <button
                     onClick={(e) => {
                       e.stopPropagation();
                       setEditingChatId(chat.id);
                       setEditingTitle(chat.title);
                     }}
                     style={{ padding: '2px' }}
+                    aria-label={`Rename chat "${chat.title}"`}
                   >
                     <Edit2 size={12} />
                   </button>
-                  <button 
+                  <button
                     onClick={(e) => deleteChat(chat.id, e)}
                     style={{ padding: '2px' }}
+                    aria-label={`Delete chat "${chat.title}"`}
                   >
                     <X size={12} />
                   </button>
@@ -178,18 +195,27 @@ export default function Sidebar({
         )}
 
         <div className="user-profile">
-          <span 
+          <button
+            className="btn-icon"
             onClick={() => setIsProfileOpen(true)}
-            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-            title="View User Profile"
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            aria-label={`View profile for ${user?.username || 'current user'}`}
           >
             👤 {user?.username}
-          </span>
+          </button>
           <div style={{ display: 'flex', gap: '4px' }}>
-            <button className="btn-icon" onClick={() => setIsSettingsOpen(true)}>
+            <button
+              className="btn-icon"
+              onClick={toggleTheme}
+              aria-label={isLight ? 'Switch to dark theme' : 'Switch to light theme'}
+              title={isLight ? 'Switch to dark theme' : 'Switch to light theme'}
+            >
+              {isLight ? <Moon size={18} /> : <Sun size={18} />}
+            </button>
+            <button className="btn-icon" onClick={() => setIsSettingsOpen(true)} aria-label="Open settings">
               <Settings size={18} />
             </button>
-            <button className="btn-icon" onClick={handleLogout}>
+            <button className="btn-icon" onClick={handleLogout} aria-label="Log out">
               <LogOut size={18} />
             </button>
           </div>

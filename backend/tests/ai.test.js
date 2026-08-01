@@ -324,6 +324,47 @@ describe('Agent Loop & LLM Stream Unit Tests', () => {
     expect(contents.join('')).toBe('Anthropic responder output.');
   });
 
+  test('runAgentLoop - emits a second, completion-shaped onToolCall after a subtask resolves', async () => {
+    // E1 (live multi-part progress): each tool/delegation gets a dispatch-shaped
+    // onToolCall({tool, action, params}) with no status, and this session added a
+    // SECOND onToolCall({tool, label, status}) once that same tool's result is in,
+    // so the frontend can distinguish "just started" from "just finished" and
+    // render a running checklist instead of only the collapsed thoughts log.
+    routerDecisions = [
+      {
+        thought: 'Run weather tool.',
+        tool: 'weather',
+        action: 'current',
+        params: { zipcode: '32421', country: 'US' }
+      },
+      {
+        thought: 'Finish.',
+        tool: 'none',
+        action: '',
+        params: {}
+      }
+    ];
+
+    const toolCalls = [];
+    await runAgentLoop({
+      db,
+      userId,
+      provider: 'local',
+      modelName: 'gemma',
+      userMessage: 'Weather please',
+      history: [],
+      onThought: jest.fn(),
+      onContent: jest.fn(),
+      onToolCall: (call) => toolCalls.push(call)
+    });
+
+    expect(toolCalls.length).toBe(2);
+    expect(toolCalls[0]).toMatchObject({ tool: 'weather', action: 'current' });
+    expect(toolCalls[0].status).toBeUndefined();
+    expect(toolCalls[1]).toMatchObject({ tool: 'weather', status: 'done' });
+    expect(toolCalls[1].label).toBeTruthy();
+  });
+
   test('runAgentLoop - router parser fallback on malformed response', async () => {
     routerDecisions = [
       'Malformed plain text response that fails JSON parsing'

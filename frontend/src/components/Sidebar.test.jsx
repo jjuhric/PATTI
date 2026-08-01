@@ -139,15 +139,25 @@ describe('Sidebar Component Tests', () => {
     fireEvent.click(buttons[1]);
     expect(mockDeleteChat).toHaveBeenCalled();
 
-    const userProfile = container.querySelector('.user-profile');
-    const userButtons = userProfile.querySelectorAll('button');
-    // First user footer button is Settings
-    fireEvent.click(userButtons[0]);
+    // Selected by accessible name (I3) rather than position - the footer also
+    // has a profile button and a theme toggle sharing this same button row.
+    fireEvent.click(screen.getByLabelText('Open settings'));
     expect(mockSetIsSettingsOpen).toHaveBeenCalledWith(true);
 
-    // Second user footer button is Logout
-    fireEvent.click(userButtons[1]);
+    fireEvent.click(screen.getByLabelText('Log out'));
     expect(mockHandleLogout).toHaveBeenCalled();
+  });
+
+  test('theme toggle calls toggleTheme and reflects the current theme (I2)', () => {
+    const mockToggleTheme = vi.fn();
+    const { rerender } = render(<Sidebar {...defaultProps} theme="dark" toggleTheme={mockToggleTheme} />);
+
+    const toggleBtn = screen.getByLabelText('Switch to light theme');
+    fireEvent.click(toggleBtn);
+    expect(mockToggleTheme).toHaveBeenCalled();
+
+    rerender(<Sidebar {...defaultProps} theme="light" toggleTheme={mockToggleTheme} />);
+    expect(screen.getByLabelText('Switch to dark theme')).toBeInTheDocument();
   });
 
   test('covers logo image error and AI Memory click', () => {

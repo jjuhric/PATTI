@@ -10,9 +10,6 @@ CREATE TABLE IF NOT EXISTS users (
   weather_api_key TEXT,
   last_briefing_at DATETIME,
   briefing_hour INTEGER DEFAULT 7,
-  dob TEXT,
-  gender TEXT,
-  political_leaning TEXT DEFAULT 'Undecided',
   interests TEXT DEFAULT '[]',
   favorite_teams TEXT DEFAULT '[]',
   timezone TEXT DEFAULT 'America/Chicago',
@@ -34,6 +31,7 @@ CREATE TABLE IF NOT EXISTS messages (
   role TEXT NOT NULL, -- 'user', 'assistant' (or 'model' / 'thought')
   content TEXT NOT NULL,
   thoughts TEXT, -- reasoning/steps
+  is_error INTEGER DEFAULT 0, -- 1 when this assistant message records a failed turn (see routes/chat.js)
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
 );

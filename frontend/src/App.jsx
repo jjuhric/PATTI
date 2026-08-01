@@ -28,6 +28,32 @@ function App() {
   const [authForm, setAuthForm] = useState({ username: '', password: '' });
   const [toast, setToast] = useState({ message: '', type: 'info' });
   const [popupAlert, setPopupAlert] = useState(null);
+
+  // Theme: null means "no explicit choice yet" - the CSS's own
+  // prefers-color-scheme fallback decides, and PATTI stays dark by default
+  // for anyone who hasn't touched the toggle, matching how it's always looked.
+  const [theme, setTheme] = useState(() => {
+    const stored = localStorage.getItem('patti-theme');
+    return stored === 'light' || stored === 'dark' ? stored : null;
+  });
+
+  useEffect(() => {
+    if (theme) {
+      document.documentElement.dataset.theme = theme;
+      localStorage.setItem('patti-theme', theme);
+    } else {
+      delete document.documentElement.dataset.theme;
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => {
+      if (prev === 'light') return 'dark';
+      if (prev === 'dark') return 'light';
+      const systemPrefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+      return systemPrefersLight ? 'dark' : 'light';
+    });
+  };
   const [popupConfirm, setPopupConfirm] = useState(null);
   const [popupChoices, setPopupChoices] = useState(null);
 
@@ -110,7 +136,7 @@ function App() {
   const [showLocalKey, setShowLocalKey] = useState(false);
   const [showOnlineKey, setShowOnlineKey] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [profile, setProfile] = useState({ name: '', zipcode: '', country: 'US', temp_unit: 'imperial', weather_api_key: '', dob: '', gender: '', political_leaning: 'Undecided', interests: [] });
+  const [profile, setProfile] = useState({ name: '', zipcode: '', country: 'US', temp_unit: 'imperial', weather_api_key: '', interests: [] });
   const [liveModel, setLiveModel] = useState('');
   const [nodes, setNodes] = useState([]);
 
@@ -127,6 +153,7 @@ function App() {
   const [streamThoughts, setStreamThoughts] = useState('');
   const [streamContent, setStreamContent] = useState('');
   const [toolLogs, setToolLogs] = useState([]); // array of active/past tool calls
+  const [subtaskProgress, setSubtaskProgress] = useState([]); // [{label, status: 'done'|'error'}] - completed parts of a multi-part request, in order
   const [streamStatus, setStreamStatus] = useState('');
   const [llmBusy, setLlmBusy] = useState(false); // true only when this is a PATTI client and the host is busy
   const [backgroundJob, setBackgroundJob] = useState(null); // { agent, label } while a background job (e.g. dev_project) is running, else null
@@ -812,6 +839,7 @@ function App() {
     setStreamContent('');
     setStreamStatus('');
     setToolLogs([]);
+    setSubtaskProgress([]);
 
     let accumulatedRawContent = '';
     let coordinatorThoughts = '';
@@ -926,11 +954,18 @@ function App() {
                 setStreamContent(accumulatedRawContent);
               }
             } else if (eventType === 'tool') {
-              setToolLogs(prev => [...prev, dataValue]);
-              if (dataValue.agent) {
-                setActiveAgent(dataValue.agent);
-              } else if (dataValue.tool && dataValue.tool.startsWith('delegate_to_')) {
-                setActiveAgent(dataValue.tool.replace('delegate_to_', ''));
+              if (dataValue.status) {
+                // Completion event (a part of a multi-part request just finished) -
+                // build the live progress checklist, not the tool-call log (which
+                // expects a dispatch-shaped {tool, action, params} entry).
+                setSubtaskProgress(prev => [...prev, { label: dataValue.label || dataValue.tool, status: dataValue.status }]);
+              } else {
+                setToolLogs(prev => [...prev, dataValue]);
+                if (dataValue.agent) {
+                  setActiveAgent(dataValue.agent);
+                } else if (dataValue.tool && dataValue.tool.startsWith('delegate_to_')) {
+                  setActiveAgent(dataValue.tool.replace('delegate_to_', ''));
+                }
               }
             } else if (eventType === 'command_approval_required') {
               setToolLogs(prev => [...prev, {
@@ -956,8 +991,12 @@ function App() {
         }
       }
 
-      // Finish streaming, sync messages list
-      fetchMessages(activeChatId);
+      // Finish streaming, sync messages list. Awaited specifically (unlike the
+      // calendar/memory syncs below) so `finally`'s setIsStreaming(false) doesn't
+      // fire - and unmount the live streaming bubble - before the real persisted
+      // messages have actually replaced it, which used to cause a one-frame flash
+      // of nothing between the stream ending and the fetched list rendering.
+      await fetchMessages(activeChatId);
       // Sync calendar events in case the AI modified schedule
       fetchCalendarEvents();
       // Sync memories in case the AI learned something new
@@ -1012,7 +1051,24 @@ function App() {
         }]);
       } else {
         console.error(err);
-        showToast('Communication failed. Is LM Studio or backend active?', 'error');
+        const errNote = err.message || 'Communication failed. Is LM Studio or backend active?';
+        showToast(errNote, 'error');
+
+        // A toast alone disappears in a few seconds and leaves no trace in the
+        // thread - if the backend never got far enough to persist anything (or
+        // the request never reached it at all), the chat would otherwise look
+        // like PATTI silently ignored the message. Always leave a visible,
+        // honest bubble behind, same as the abort-handling branch above does.
+        let errContent = accumulatedRawContent.trim();
+        errContent = errContent ? `${errContent}\n\n⚠️ ${errNote}` : `⚠️ ${errNote}`;
+
+        setMessages(prev => [...prev, {
+          id: 'error-' + Date.now(),
+          role: 'assistant',
+          content: errContent,
+          thoughts: coordinatorThoughts,
+          isError: true
+        }]);
       }
     } finally {
       setIsStreaming(false);
@@ -1088,6 +1144,8 @@ function App() {
         setIsProfileOpen={setIsProfileOpen}
         setIsEsp32ModalOpen={setIsEsp32ModalOpen}
         appVersion={appVersion}
+        theme={theme}
+        toggleTheme={toggleTheme}
       />
 
       {isMobileSidebarOpen && (
@@ -1183,6 +1241,7 @@ function App() {
             streamThoughts={streamThoughts}
             streamContent={streamContent}
             toolLogs={toolLogs}
+            subtaskProgress={subtaskProgress}
             inputText={inputText}
             setInputText={setInputText}
             handleSendMessage={handleSendMessage}
@@ -1309,6 +1368,7 @@ function App() {
             streamThoughts={streamThoughts}
             streamContent={streamContent}
             toolLogs={toolLogs}
+            subtaskProgress={subtaskProgress}
             inputText={inputText}
             setInputText={setInputText}
             handleSendMessage={handleSendMessage}

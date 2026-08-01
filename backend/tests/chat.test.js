@@ -358,5 +358,42 @@ describe('Chat Router Tests', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ chatId, message: 'Hello' });
     expect(res2.statusCode).toBe(200); // SSE endpoints return 200 and write error to the stream
+
+    // R1: a totally-failed turn used to leave zero assistant rows (the request
+    // just vanished, no bubble, no trace) - it must now persist an honest,
+    // clearly-marked error message instead of going silent.
+    const errMsg = await db.get(
+      "SELECT * FROM messages WHERE chat_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+      [chatId]
+    );
+    expect(errMsg).toBeDefined();
+    expect(errMsg.content).toContain('Test runAgentLoop stream failure');
+    expect(errMsg.is_error).toBe(1);
+  });
+
+  test('POST /api/chat/stream - error persists partial content alongside the failure note', async () => {
+    const db = await mockTestDb;
+    const insertRes = await db.run('INSERT INTO chats (user_id, title) VALUES (?, ?)', [userId, 'Stream Partial Failure Chat']);
+    const chatId = insertRes.lastID;
+
+    mockRunAgentLoop.mockImplementationOnce(async (options) => {
+      options.onContent('Here is what I found so far...');
+      throw new Error('Connection dropped mid-stream');
+    });
+
+    const res = await request(app)
+      .post('/api/chat/stream')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ chatId, message: 'Hello' });
+    expect(res.statusCode).toBe(200);
+
+    const errMsg = await db.get(
+      "SELECT * FROM messages WHERE chat_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+      [chatId]
+    );
+    expect(errMsg).toBeDefined();
+    expect(errMsg.content).toContain('Here is what I found so far...');
+    expect(errMsg.content).toContain('Connection dropped mid-stream');
+    expect(errMsg.is_error).toBe(1);
   });
 });
