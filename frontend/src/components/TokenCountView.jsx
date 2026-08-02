@@ -131,7 +131,7 @@ export default function TokenCountView({ token }) {
       </div>
 
       {/* Overall Token Count Card */}
-      <div className="memory-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '20px', background: 'var(--bg-glass)', border: '1px solid var(--border-glass)', borderRadius: '16px', boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.2)' }}>
+      <div style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '20px', background: 'var(--bg-glass)', border: '1px solid var(--border-glass)', borderRadius: '16px', boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.2)' }}>
         <div style={{ background: 'var(--accent-glow)', padding: '12px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <BarChart2 size={32} style={{ color: 'var(--accent-primary)' }} />
         </div>

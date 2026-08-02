@@ -615,8 +615,8 @@ export default function ChatPane({
             {(streamContent || isStreaming) && (
               <div className={`message-bubble ${!streamContent ? 'typing-cursor' : ''}`}>
                 {!streamContent && streamStatus ? (
-                  <div className="flex items-center gap-2 text-sm italic text-secondary animate-pulse" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span className="loading loading-spinner loading-xs" style={{ display: 'inline-block', width: '12px', height: '12px', border: '2px solid currentColor', borderRightColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ display: 'inline-block', width: '12px', height: '12px', border: '2px solid currentColor', borderRightColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></span>
                     {streamStatus}
                   </div>
                 ) : (

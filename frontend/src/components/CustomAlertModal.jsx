@@ -11,7 +11,7 @@ export default function CustomAlertModal({ alert, onClose }) {
     switch (alert.type) {
       case 'error':
         return {
-          icon: <AlertCircle className="text-red-500" size={32} style={{ color: '#ef4444' }} />,
+          icon: <AlertCircle size={32} style={{ color: '#ef4444' }} />,
           borderColor: '#ef4444',
           badgeBg: 'rgba(239, 68, 68, 0.1)',
           badgeText: 'Error',
@@ -19,7 +19,7 @@ export default function CustomAlertModal({ alert, onClose }) {
         };
       case 'warning':
         return {
-          icon: <AlertTriangle className="text-amber-500" size={32} style={{ color: '#f59e0b' }} />,
+          icon: <AlertTriangle size={32} style={{ color: '#f59e0b' }} />,
           borderColor: '#f59e0b',
           badgeBg: 'rgba(245, 158, 11, 0.1)',
           badgeText: 'Warning',
@@ -27,7 +27,7 @@ export default function CustomAlertModal({ alert, onClose }) {
         };
       case 'confirm':
         return {
-          icon: <AlertTriangle className="text-amber-500" size={32} style={{ color: '#f59e0b' }} />,
+          icon: <AlertTriangle size={32} style={{ color: '#f59e0b' }} />,
           borderColor: '#f59e0b',
           badgeBg: 'rgba(245, 158, 11, 0.1)',
           badgeText: 'Confirm',
@@ -35,7 +35,7 @@ export default function CustomAlertModal({ alert, onClose }) {
         };
       default:
         return {
-          icon: <Info className="text-violet-500" size={32} style={{ color: '#8b5cf6' }} />,
+          icon: <Info size={32} style={{ color: '#8b5cf6' }} />,
           borderColor: '#8b5cf6',
           badgeBg: 'rgba(139, 92, 246, 0.1)',
           badgeText: 'Info',

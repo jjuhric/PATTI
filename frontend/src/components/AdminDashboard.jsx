@@ -254,20 +254,20 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
           {usersError && <div style={{ color: 'var(--error)', fontSize: '0.85rem', marginBottom: 12 }}>{usersError}</div>}
           {usersSuccess && <div style={{ color: 'var(--success)', fontSize: '0.85rem', marginBottom: 12 }}>{usersSuccess}</div>}
           <div className="overflow-x-auto w-full">
-            <table className="table table-zebra w-full text-sm">
+            <table className="table table-zebra w-full">
               <thead>
-                <tr className="border-b border-base-300 text-left text-neutral-content">
+                <tr>
                   <th>Username</th>
                   <th>Admin</th>
                   <th>Token Quota</th>
                   <th>24h Usage</th>
-                  <th className="text-right">Actions</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {users.map(u => (
-                  <tr key={u.id} className="border-b border-base-300">
-                    <td className="font-bold">{u.username} {u.name ? `(${u.name})` : ''}</td>
+                  <tr key={u.id}>
+                    <td>{u.username} {u.name ? `(${u.name})` : ''}</td>
                     <td>{u.is_admin === 1 ? 'Yes' : 'No'}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -290,7 +290,7 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
                       </div>
                     </td>
                     <td>{u.total_used_24h.toLocaleString()} tokens</td>
-                    <td className="text-right">
+                    <td>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                         <button
                           className="btn btn-ghost btn-sm"
@@ -327,21 +327,21 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
 
       {section === 'devices' && (
         <div className="overflow-x-auto w-full">
-          <table className="table table-zebra w-full text-sm">
+          <table className="table table-zebra w-full">
             <thead>
-              <tr className="border-b border-base-300 text-left text-neutral-content">
+              <tr>
                 <th>Name</th>
                 <th>Role</th>
                 <th>Device Type</th>
                 <th>IP Address</th>
                 <th>Status</th>
-                <th className="text-right">Actions</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {nodes.map(node => (
-                <tr key={node.id} className="border-b border-base-300">
-                  <td className="font-bold">{node.node_name}</td>
+                <tr key={node.id}>
+                  <td>{node.node_name}</td>
                   <td>
                     <span
                       className="badge"
@@ -358,7 +358,7 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
                   <td>{node.device_type}</td>
                   <td>{node.ip_address}:{node.port}</td>
                   <td>{node.is_online ? 'Online' : 'Offline'}</td>
-                  <td className="text-right">
+                  <td>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                       <button className="btn btn-ghost btn-sm" title="Edit device" onClick={() => openEditModal(node)}>
                         <Pencil size={16} />

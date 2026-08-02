@@ -97,15 +97,15 @@ export default function AgentDashboard({ nodes = [], token, handleDeleteNode, on
       </div>
       {activeSubTab === 'nodes' && (
         <div className="overflow-x-auto w-full">
-          <table className="table table-zebra w-full text-sm">
+          <table className="table table-zebra w-full">
             <thead>
-              <tr className="border-b border-base-300 text-left text-neutral-content">
+              <tr>
                 <th>Status</th>
                 <th>Node Name</th>
                 <th>Device Signature</th>
                 <th>Network IP Address</th>
                 <th>Health Status</th>
-                <th className="text-right">Actions</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -136,19 +136,19 @@ export default function AgentDashboard({ nodes = [], token, handleDeleteNode, on
                   .filter(node => node.is_online === 1 || node.is_online === true)
                   .map(node => {
                     return (
-                      <tr key={node.id} className="border-b border-base-300">
+                      <tr key={node.id}>
                         <td>
-                          <div className="w-3 h-3 rounded-full bg-success shadow-lg" />
+                          <div className="bg-success" style={{ width: 12, height: 12, borderRadius: '50%' }} />
                         </td>
-                        <td className="font-bold">{node.node_name}</td>
+                        <td>{node.node_name}</td>
                         <td>{node.device_type}</td>
                         <td>{node.ip_address}:{node.port}</td>
                         <td>
-                          <span className="px-2 py-1 rounded text-white font-semibold bg-success">
+                          <span className="bg-success" style={{ padding: '2px 8px', borderRadius: 4, color: '#fff', fontWeight: 600 }}>
                             Healthy
                           </span>
                         </td>
-                        <td className="text-right">
+                        <td>
                           <button className="btn btn-ghost btn-sm text-error" onClick={() => handleDeleteNode(node.id)} aria-label={`Delete node ${node.node_name}`}>
                             <Trash2 size={16} />
                           </button>
