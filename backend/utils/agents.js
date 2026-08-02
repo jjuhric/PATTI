@@ -549,6 +549,9 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
     } else if (decision.tool === 'calendar') {
       const { handleCalendarTool } = require('../tools/calendar_tool');
       output = await handleCalendarTool(db, userId, decision.action, decision.params);
+    } else if (decision.tool === 'manage_recurring_task') {
+      const { handleRecurringTaskTool } = require('../tools/recurring_task_tool');
+      output = await handleRecurringTaskTool(db, userId, decision.action, decision.params);
     } else if (decision.tool === 'time') {
       const { handleTimeTool } = require('../tools/time_tool');
       output = await handleTimeTool(db, userId, decision.action, decision.params);

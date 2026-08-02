@@ -1,21 +1,9 @@
 const { handleWeatherTool } = require('../tools/weather_tool');
 const { handleGoogleNewsTool } = require('../ai');
 const { generateText, buildSettingsForUser } = require('./llm_text');
+const { getUserLocalNow } = require('./timezone');
+const { getTodayEventsFormatted, getUserMemoriesFormatted } = require('./scheduled_digest_helpers');
 const logger = require('./logger');
-
-/**
- * Resolves "now" (or an optional past `at` timestamp) into a given IANA timezone's local hour
- * (0-23) and calendar date (YYYY-MM-DD), with no external API call - `users.timezone` is
- * already a real IANA zone string, so Intl can do this directly.
- */
-function getUserLocalNow(timezone, at = new Date()) {
-  const tz = timezone || 'America/Chicago';
-  const hourStr = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', hour12: false }).format(at);
-  // Some ICU versions format midnight as "24" rather than "00" - normalize either way.
-  const hour = parseInt(hourStr, 10) % 24;
-  const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(at); // YYYY-MM-DD
-  return { hour, dateStr };
-}
 
 async function generateDailyBriefing(db, userId) {
   try {
@@ -27,15 +15,7 @@ async function generateDailyBriefing(db, userId) {
     const { dateStr: todayStr } = getUserLocalNow(userTimezone);
 
     // 2. Fetch today's calendar events (today, in the USER's own local date, not UTC)
-    const events = await db.all(
-      `SELECT * FROM calendar_events
-       WHERE user_id = ?
-         AND (start_time LIKE ? OR start_time LIKE ?)`,
-      [userId, `${todayStr}%`, `%${todayStr}%`]
-    );
-    const eventsText = events.length > 0
-      ? events.map(e => `- [${e.start_time}] ${e.title}: ${e.description || 'No desc'}`).join('\n')
-      : 'No events scheduled for today.';
+    const eventsText = await getTodayEventsFormatted(db, userId, todayStr);
 
     // 3. Fetch weather - handleWeatherTool self-fetches zipcode/country/temp_unit/API key from
     // the users row by userId (it no longer accepts them as params) and already returns a
@@ -43,15 +23,7 @@ async function generateDailyBriefing(db, userId) {
     const weatherText = await handleWeatherTool(db, userId, 'current', {});
 
     // 4. Fetch memories
-    const memories = await db.all(
-      `SELECT content FROM memories
-       WHERE user_id = ?
-         AND (expires_at IS NULL OR expires_at > datetime('now'))`,
-      [userId]
-    );
-    const memoriesText = memories.length > 0
-      ? memories.map(m => `- ${m.content}`).join('\n')
-      : 'No stored user memories found.';
+    const memoriesText = await getUserMemoriesFormatted(db, userId);
 
     // 5. Fetch live Google News
     let newsText = 'No news updates retrieved today.';

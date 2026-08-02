@@ -307,14 +307,16 @@ const certPath = path.join(__dirname, 'certs/tailscale.crt');
 const keyPath = path.join(__dirname, 'certs/tailscale.key');
 
 const startScheduler = () => {
-  // Initialize briefing scheduler background loop if not running unit tests
+  // Initialize background scheduler loops if not running unit tests
   if (process.env.NODE_ENV !== 'test') {
     const { getDb } = require('./db');
     const { startBriefingScheduler } = require('./utils/briefing');
+    const { startRecurringTaskScheduler } = require('./utils/recurring_tasks_scheduler');
     getDb().then(db => {
       startBriefingScheduler(db);
+      startRecurringTaskScheduler(db);
     }).catch(err => {
-      logger.error('Failed to start briefing scheduler:', err);
+      logger.error('Failed to start briefing/recurring-task schedulers:', err);
     });
   }
 };
