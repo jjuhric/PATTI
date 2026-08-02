@@ -122,6 +122,11 @@ describe('handleDeepResearchProTool', () => {
     expect(message.role).toBe('assistant');
 
     expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'info' }));
+
+    const notification = await db.get('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+    expect(notification.type).toBe('info');
+    expect(notification.chat_id).toBe(chat.id);
+    expect(notification.is_read).toBe(0);
   });
 
   test('on non-zero exit code, marks the job failed and posts a failure message instead', async () => {
@@ -137,6 +142,10 @@ describe('handleDeepResearchProTool', () => {
     const message = await db.get('SELECT * FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', [chat.id]);
     expect(message.content).toMatch(/Deep research failed/);
     expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+
+    const notification = await db.get('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+    expect(notification.type).toBe('error');
+    expect(notification.chat_id).toBe(chat.id);
   });
 
   test('on close with no parseable report path, marks the job failed', async () => {

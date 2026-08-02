@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { broadcastAlert } = require('../routes/alerts');
+const { notifyUser } = require('../utils/notifications');
 const { handleDocumentGeneratorTool } = require('./document_generator_tool');
 const { generateText, buildSettingsForUser } = require('../utils/llm_text');
 const logger = require('../utils/logger');
@@ -115,7 +115,7 @@ async function runCourseGenerationJob(db, jobId, userId, topic, format) {
 
     const { filepath, downloadLine } = await renderCourseFile(db, userId, topic, format, lessonSections);
 
-    await postToResultsChat(
+    const resultsChatId = await postToResultsChat(
       db,
       userId,
       `# Course ready: ${topic}\n\n` +
@@ -129,7 +129,7 @@ async function runCourseGenerationJob(db, jobId, userId, topic, format) {
       "UPDATE course_generation_jobs SET status = 'completed', output_path = ?, completed_at = datetime('now') WHERE job_id = ?",
       [filepath, jobId]
     );
-    broadcastAlert({ type: 'info', message: `Your course on "${topic}" is ready.` });
+    await notifyUser(db, userId, { type: 'info', message: `Your course on "${topic}" is ready.`, chatId: resultsChatId });
   } catch (err) {
     logger.error('[Course Builder] Job failed:', err);
     await finishJobWithFailure(db, userId, jobId, topic, err.message);
@@ -280,16 +280,17 @@ async function postToResultsChat(db, userId, content) {
     chat = { id: result.lastID, title: RESULTS_CHAT_TITLE };
   }
   await db.run('INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)', [chat.id, 'assistant', content]);
+  return chat.id;
 }
 
 async function finishJobWithFailure(db, userId, jobId, topic, message) {
   try {
-    await postToResultsChat(db, userId, `# Course generation failed: ${topic}\n\n${message}`);
+    const resultsChatId = await postToResultsChat(db, userId, `# Course generation failed: ${topic}\n\n${message}`);
     await db.run(
       "UPDATE course_generation_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE job_id = ?",
       [message, jobId]
     );
-    broadcastAlert({ type: 'error', message: `Course generation for "${topic}" failed.` });
+    await notifyUser(db, userId, { type: 'error', message: `Course generation for "${topic}" failed.`, chatId: resultsChatId });
   } catch (err) {
     logger.error('[Course Builder] Failed to record job failure:', err);
   }
