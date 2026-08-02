@@ -365,6 +365,48 @@ describe('Agent Loop & LLM Stream Unit Tests', () => {
     expect(toolCalls[1].label).toBeTruthy();
   });
 
+  test('runAgentLoop - Loop Detector nudges past a duplicate call instead of ending the whole request', async () => {
+    // Regression test: a real live run asked for 4 unrelated things (news, Cowboys, tech,
+    // weather); news_agent failed, and the Supervisor's very next turn chose to RETRY news_agent
+    // instead of moving on to one of the other 3 still-outstanding parts. The old Loop Detector
+    // treated that single duplicate as fatal and hard-terminated the entire coordinator loop -
+    // so Cowboys/tech/weather were never even attempted despite 8 turns still available. It
+    // should instead nudge the Supervisor to pick something else and let the loop continue,
+    // still bounded by the normal turn cap.
+    routerDecisions = [
+      { thought: 'Check weather.', tool: 'weather', action: 'current', params: { zipcode: '32421', country: 'US' } },
+      { thought: 'Check weather again (a mistake).', tool: 'weather', action: 'current', params: { zipcode: '32421', country: 'US' } },
+      { thought: 'Try a different part instead.', tool: 'weather', action: 'current', params: { zipcode: '90210', country: 'US' } },
+      { thought: 'Done.', tool: 'none', action: '', params: {} }
+    ];
+
+    const thoughts = [];
+    const toolCalls = [];
+    const contents = [];
+    await runAgentLoop({
+      db,
+      userId,
+      provider: 'local',
+      modelName: 'gemma',
+      userMessage: 'Weather please, twice by mistake, then a third distinct thing',
+      history: [],
+      onThought: (t) => thoughts.push(t),
+      onContent: (c) => contents.push(c),
+      onToolCall: (call) => toolCalls.push(call)
+    });
+
+    const allThoughts = thoughts.join('');
+    expect(allThoughts).toContain('[Loop Detector]');
+    expect(allThoughts).toContain('already attempted');
+
+    // Proves the loop did NOT terminate on the duplicate - the third, distinct call actually
+    // dispatched and completed (dispatch + completion onToolCall for it).
+    const distinctCallDispatches = toolCalls.filter(c => c.params && c.params.zipcode === '90210');
+    expect(distinctCallDispatches.length).toBeGreaterThan(0);
+
+    expect(contents.join('')).toBe('Hi responder output.');
+  });
+
   test('runAgentLoop - router parser fallback on malformed response', async () => {
     routerDecisions = [
       'Malformed plain text response that fails JSON parsing'

@@ -1008,8 +1008,24 @@ If no changes are required and you can proceed without executing the code, then 
       ? decision.tool
       : `${decision.tool}:${decision.action || 'default'}:${JSON.stringify(decision.params || {})}`;
     if (seenToolCalls.has(toolCallSignature)) {
-      onThought(`[Loop Detector] Detected duplicate delegation or tool call in coordinator loop: "${toolCallSignature}". Force terminating loop to prevent runaway execution.\n`);
-      break;
+      // Used to hard-break the WHOLE coordinator loop the instant any duplicate call showed
+      // up - so if the Supervisor's very next turn after a failure chose to retry that same
+      // part (a real, observed local-model behavior) instead of moving on, every OTHER still-
+      // outstanding part of a multi-part request (e.g. "news, Cowboys, tech, weather" - only
+      // news was ever attempted) got silently abandoned too, even with turns to spare. Nudge
+      // and let the Supervisor take another turn instead - still fully bounded by maxToolCalls,
+      // same as every other turn, so a persistently confused model still can't loop forever.
+      onThought(`[Loop Detector] "${toolCallSignature}" was already attempted - nudging the Supervisor to try something else instead of ending the whole request.\n`);
+      currentHistory.push({
+        role: 'assistant',
+        content: `Thought: ${decision.thought}\nCalling tool: ${decision.tool} with parameters: ${JSON.stringify(decision.params)}`
+      });
+      currentHistory.push({
+        role: 'user',
+        content: `[System] "${toolCallSignature}" was already attempted earlier this conversation - its result (success or failure) is already in your history above, and retrying the exact same call will not produce a different result. If another distinct part of the original request is still outstanding, delegate to a DIFFERENT agent/tool for it now. If every part that can realistically be completed has already been attempted, set "tool" to "none" so the final response can be compiled.`
+      });
+      toolCallsCount++;
+      continue;
     }
     seenToolCalls.add(toolCallSignature);
 

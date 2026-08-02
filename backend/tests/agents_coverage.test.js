@@ -345,11 +345,16 @@ describe('Agents Coverage Extender Tests', () => {
     ];
     let idx = 0;
     global.fetch = jest.fn().mockImplementation(async () => {
+      // Falls back to a safe "done" decision once the scripted list runs out, rather than
+      // JSON.stringify(undefined) (a real `undefined`, not the string "undefined") - the
+      // Loop Detector nudging past a duplicate call instead of hard-terminating the whole
+      // coordinator loop means more turns can genuinely run here than `decisions.length`.
+      const decision = decisions[idx++] || { tool: 'none' };
       return {
         ok: true,
         headers: { get: () => 'application/json' },
         json: async () => ({
-          choices: [{ message: { content: JSON.stringify(decisions[idx++]) } }]
+          choices: [{ message: { content: JSON.stringify(decision) } }]
         })
       };
     });
