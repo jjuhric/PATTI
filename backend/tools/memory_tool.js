@@ -1,4 +1,6 @@
-const { getEmbedding, getSemanticSimilarity, storeMemory, searchMemory } = require('../utils/embeddings');
+const { getEmbedding, getSemanticSimilarity, storeMemory, searchMemory, deleteMemory } = require('../utils/embeddings');
+const { consolidateAllUsersMemories } = require('../utils/memory_consolidation');
+const logger = require('../utils/logger');
 
 /**
  * Handles operations for the Memory tool.
@@ -82,12 +84,7 @@ async function handleMemoryTool(db, userId, action, params = {}) {
 
             // Update in LanceDB: delete old text and store new
             try {
-              const lance = require('@lancedb/lancedb');
-              const path = require('path');
-              const dbPath = path.resolve(__dirname, '../../data/vector-store');
-              const lConnection = await lance.connect(dbPath);
-              const table = await lConnection.openTable('memory');
-              await table.delete(`text = ${JSON.stringify(duplicate.text)}`);
+              await deleteMemory(duplicate.text);
             } catch (err) {
               console.error('Failed to delete old duplicate from LanceDB:', err);
             }
@@ -147,6 +144,16 @@ async function handleMemoryTool(db, userId, action, params = {}) {
                 'SELECT id FROM memories WHERE user_id = ? AND content = ? AND (agent_name = ? OR (? IS NULL AND agent_name IS NULL))',
                 [userId, r.text, agentName || null, agentName || null]
               );
+              if (sqliteRow) {
+                // Only true semantic-relevance matches count as a "recall" - this is what
+                // utils/memory_consolidation.js uses to decide whether a long-term memory has
+                // actually been used, not just listed. The "no query"/"zero-match fallback"
+                // branches below deliberately do not bump this.
+                await db.run(
+                  'UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = datetime(\'now\') WHERE id = ?',
+                  [sqliteRow.id]
+                );
+              }
               return {
                 id: sqliteRow ? sqliteRow.id : 'unknown',
                 content: r.text,
@@ -207,8 +214,10 @@ async function handleMemoryTool(db, userId, action, params = {}) {
 }
 
 /**
- * Searches memories for important events/reminders matching today's date, 
- * deletes expired ones, and automatically registers calendar entries.
+ * Deletes expired memories, merges/retires stale long-term memories (see
+ * utils/memory_consolidation.js), and scans active memories for today's-date
+ * reminders to auto-register as calendar entries. Runs once at boot plus every
+ * 24h (see server.js) - the only periodic-maintenance job in this codebase.
  *
  * @param {import('sqlite').Database} db SQLite database instance.
  */
@@ -219,10 +228,15 @@ async function runDailyMemoryCheck(db) {
     // 1. Delete expired memories
     const deleteResult = await db.run('DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= datetime(\'now\')');
     if (deleteResult.changes > 0) {
-      console.log(`Cleaned up ${deleteResult.changes} expired memories.`);
+      logger.info(`Cleaned up ${deleteResult.changes} expired memories.`);
     }
 
-    // 2. Fetch active memories to scan for today's reminders
+    // 2. Merge near-duplicate and retire stale long-term memories - see
+    // utils/memory_consolidation.js. Runs after the expired-memory delete above so
+    // retirement's grace-period downgrade starts counting from a consistent state.
+    await consolidateAllUsersMemories(db);
+
+    // 3. Fetch active memories to scan for today's reminders
     const activeMemories = await db.all(
       'SELECT id, user_id, content FROM memories WHERE expires_at IS NULL OR expires_at > datetime(\'now\')'
     );
@@ -259,12 +273,12 @@ async function runDailyMemoryCheck(db) {
             'INSERT INTO calendar_events (user_id, title, start_time, end_time, description) VALUES (?, ?, ?, ?, ?)',
             [mem.user_id, title, startTime, endTime, 'Automatically scheduled from AI Memory Vault']
           );
-          console.log(`Auto-scheduled calendar reminder event for memory: "${mem.content}"`);
+          logger.info(`Auto-scheduled calendar reminder event for memory: "${mem.content}"`);
         }
       }
     }
   } catch (err) {
-    console.error('Error running daily memory check:', err);
+    logger.error('Error running daily memory check:', err);
   }
 }
 

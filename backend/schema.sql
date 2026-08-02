@@ -108,6 +108,8 @@ CREATE TABLE IF NOT EXISTS memories (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   embedding TEXT,
   agent_name TEXT,
+  last_recalled_at DATETIME, -- NULL until first true semantic-match recall; see utils/memory_consolidation.js
+  recall_count INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 

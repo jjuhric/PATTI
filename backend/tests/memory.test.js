@@ -289,6 +289,31 @@ describe('Memory Capabilities Tests', () => {
       expect(noMatchOutput).toContain('blueberries');
     });
 
+    test('handleMemoryTool recall - only a true semantic match bumps recall_count/last_recalled_at', async () => {
+      const insertResult = await mockTestDb.run(
+        "INSERT INTO memories (user_id, content, level) VALUES (?, 'I like cherries', 'long-term')",
+        [userId]
+      );
+      const memId = insertResult.lastID;
+
+      // True match: recall_count/last_recalled_at should be bumped.
+      await handleMemoryTool(mockTestDb, userId, 'recall', { query: 'cherries' });
+      let row = await mockTestDb.get('SELECT recall_count, last_recalled_at FROM memories WHERE id = ?', [memId]);
+      expect(row.recall_count).toBe(1);
+      expect(row.last_recalled_at).not.toBeNull();
+
+      // Zero-match fallback (listing recent memories, not a real relevance hit): must not
+      // count as a recall for memories it happens to list.
+      await handleMemoryTool(mockTestDb, userId, 'recall', { query: 'apples' });
+      row = await mockTestDb.get('SELECT recall_count FROM memories WHERE id = ?', [memId]);
+      expect(row.recall_count).toBe(1);
+
+      // No query at all (list everything): also must not count as a recall.
+      await handleMemoryTool(mockTestDb, userId, 'recall', {});
+      row = await mockTestDb.get('SELECT recall_count FROM memories WHERE id = ?', [memId]);
+      expect(row.recall_count).toBe(1);
+    });
+
     test('handleMemoryTool forget - deletes and handles missing IDs', async () => {
       const rememberOutput = await handleMemoryTool(mockTestDb, userId, 'remember', { content: 'Forget me' });
       const idMatch = rememberOutput.match(/Memory ID: (\d+)/);
