@@ -206,6 +206,72 @@ select.form-control option {
   box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
 }
 
+/* Base button classes - referenced across 13+ components but historically undefined,
+   meaning those buttons rendered with zero applied styling (bare browser defaults). */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+.btn:hover { background: rgba(255, 255, 255, 0.09); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-secondary {
+  background: transparent;
+  border-color: var(--border-glass);
+}
+.btn-secondary:hover { background: rgba(255, 255, 255, 0.05); }
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  border-radius: 8px;
+}
+
+/* Base badge/pill class - same "referenced but never defined" bug as .btn above.
+   Color values for the two modifiers match the inline styles MemoryPane.jsx already
+   uses for its own (fully self-styled) short-term/long-term badges, so a badge looks
+   the same regardless of which component renders it. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-glass);
+}
+
+.badge-short-term {
+  background: rgba(234, 179, 8, 0.15);
+  color: #fbbf24;
+  border-color: rgba(234, 179, 8, 0.25);
+}
+
+.badge-long-term {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--accent-green);
+  border-color: rgba(16, 185, 129, 0.25);
+}
+
+/* Referenced 12x across 4 components to tint icons, but never defined - same bug
+   class as .btn/.badge above, just a one-property fix. */
+.text-accent-primary {
+  color: var(--accent-primary);
+}
+
 .btn-primary {
   background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
   border: none;
@@ -425,12 +491,16 @@ select.form-control option {
   backdrop-filter: blur(10px);
 }
 
+.header-stat-badge,
 .model-config-badge {
   display: flex;
-  align-items: center;
-  gap: 12px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border-glass);
+}
+
+.model-config-badge {
+  align-items: center;
+  gap: 12px;
   padding: 6px 12px;
   border-radius: 12px;
   flex-shrink: 0;
@@ -612,11 +682,8 @@ select.form-control option {
 }
 
 .header-stat-badge {
-  display: flex;
   align-items: baseline;
   gap: 6px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border-glass);
   padding: 6px 10px;
   border-radius: 10px;
   white-space: nowrap;
