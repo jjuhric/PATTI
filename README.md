@@ -24,6 +24,8 @@ New to the codebase or teaching from it? The **[Wiki](https://github.com/[USER]/
 - **PATTI Client support** — pair a second full PATTI instance (its own UI, its own chat history, e.g. on a Raspberry Pi) to the Host so it can share the Host's LLM. Host-wins arbitration means the Host's own requests are never delayed by a client, and a client mid-generation is cleanly interrupted if the Host needs the LLM.
 - **Dynamic tool registry** — new tools can be authored, tested, and mounted into the running agent system at runtime without a rebuild.
 - **Real document generation** — ask for a report, a spreadsheet, a slide deck, or a full multi-lesson course, and PATTI writes the content and saves a real `.pdf`/`.docx`/`.xlsx`/`.pptx` on disk (auto-polished with proper structure and Wikimedia images). It can also reformat a document you've already uploaded into a cleaner new copy, without touching the original.
+- **Daily briefing & recurring automation** — a per-user, timezone-aware daily digest (weather, calendar, news, memories), plus your own plain-language recurring requests ("every weekday at 7am, give me weather and Cowboys news") set up, listed, or cancelled conversationally. Background-job completions (these, deep research, course generation, dev builds) persist as durable notifications with an unread badge, not just an ephemeral toast that's gone if you weren't looking.
+- **Long-term memory that stays sharp** — a periodic pass merges near-duplicate long-term memories (an LLM adjudicates whether two similar facts are redundant or one supersedes the other) and retires ones that have genuinely never been recalled, so recall quality doesn't quietly degrade as your memory store grows over months.
 
 ---
 
