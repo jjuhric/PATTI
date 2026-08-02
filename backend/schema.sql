@@ -345,4 +345,22 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read);
 
+-- A user-defined recurring automated request (e.g. "every weekday at 7am, give me
+-- weather and Cowboys news"), created/managed conversationally via
+-- tools/recurring_task_tool.js and executed by utils/recurring_tasks_scheduler.js.
+CREATE TABLE IF NOT EXISTS recurring_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  news_query TEXT,
+  days_of_week TEXT NOT NULL, -- comma-separated 3-letter lowercase: mon,tue,wed,thu,fri,sat,sun
+  hour INTEGER NOT NULL DEFAULT 7,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  last_run_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_recurring_tasks_user_active ON recurring_tasks(user_id, is_active);
+
 
