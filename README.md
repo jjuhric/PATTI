@@ -4,13 +4,13 @@
   <img src="assets/logo_text.jpg" alt="PATTI Logo" width="380" />
 </p>
 
-[![Wiki](https://img.shields.io/badge/wiki-available-brightgreen)](https://github.com/[USER]/PATTI/wiki)
+[![Wiki](https://img.shields.io/badge/wiki-available-brightgreen)](https://github.com/jjuhric/PATTI/wiki)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-active-success)](README.md)
 
 **PATTI** (Professional Artificial Text and Type Intelligence) is a local-first, multi-agent personal AI assistant. A **Supervisor Agent** reads each request and routes it to a specialized worker agent — weather, calendar, local system control, web search, your own document vault, code editing, and more — rather than handling everything in one giant, error-prone prompt. It runs primarily against a **local LLM** (LM Studio or Ollama) on your own hardware, with optional, explicitly opt-in fallback to an online provider (Gemini, OpenAI, or Anthropic Claude) if you choose to add a key in Settings.
 
-New to the codebase or teaching from it? The **[Wiki](https://github.com/[USER]/PATTI/wiki)** is written as a full explainer — it covers not just how to run PATTI, but *why* it's built the way it is, in enough depth to learn from as a real-world example of a multi-agent system, a REST API, an auth flow, and a local vector search pipeline. This README is deliberately just the summary.
+New to the codebase or teaching from it? The **[Wiki](https://github.com/jjuhric/PATTI/wiki)** is written as a full explainer — it covers not just how to run PATTI, but *why* it's built the way it is, in enough depth to learn from as a real-world example of a multi-agent system, a REST API, an auth flow, and a local vector search pipeline. This README is deliberately just the summary.
 
 ---
 
@@ -55,7 +55,7 @@ graph TB
     end
 
     UI -->|REST API Requests| WebServer
-    SSE_Conn <-->|SSE Stream /api/chat/send| WebServer
+    SSE_Conn <-->|SSE Stream /api/chat/stream| WebServer
     WebServer <--> Database
     WebServer <--> Coord
     RPi -->|MQTT Status Heartbeat| MQTT
@@ -67,7 +67,7 @@ graph TB
     Bridge -->|MicroPython REST API| ESP
 ```
 
-The React (Vite) frontend talks to a Node.js/Express backend over REST and Server-Sent Events. SQLite holds users, chats, memories, calendar events, and node registrations. Field nodes (Raspberry Pi, ESP32) announce themselves over MQTT and can be queried/controlled through a signed bridge API. See **[Architecture](https://github.com/[USER]/PATTI/wiki/Architecture)** in the Wiki for the full breakdown, including why each technology was chosen and how the agent delegation pipeline works end to end.
+The React (Vite) frontend talks to a Node.js/Express backend over REST and Server-Sent Events. SQLite holds users, chats, memories, calendar events, and node registrations. Field nodes (Raspberry Pi, ESP32) announce themselves over MQTT and can be queried/controlled through a signed bridge API. See **[Architecture](https://github.com/jjuhric/PATTI/wiki/Architecture)** in the Wiki for the full breakdown, including why each technology was chosen and how the agent delegation pipeline works end to end.
 
 ---
 
@@ -78,7 +78,7 @@ Every device role — Host, PATTI Client, or Node — is set up through a single
 1. Install [Node.js](https://nodejs.org/) v22+, [Git](https://git-scm.com/), and [LM Studio](https://lmstudio.ai/) or [Ollama](https://ollama.com/).
 2. Load a local model and start its server (LM Studio: **Local Server** tab → **Start Server**).
 3. ```powershell
-   git clone https://github.com/[USER]/PATTI.git
+   git clone https://github.com/jjuhric/PATTI.git
    cd PATTI
    Set-ExecutionPolicy Bypass -Scope Process -Force
    node patti-cli.js
@@ -88,7 +88,7 @@ Every device role — Host, PATTI Client, or Node — is set up through a single
 
 `patti-cli.js` registers a background service so PATTI keeps running after you close the terminal, and offers to open the required firewall ports for you. To stop it without uninstalling anything, run `node patti-cli.js stop`; to remove it entirely, `node patti-cli.js uninstall`.
 
-To add a **PATTI Client** (a second full PATTI instance, e.g. on a Raspberry Pi, sharing the Host's LLM) or a lightweight **Node** (ESP32/Raspberry Pi sensor device), run `node patti-cli.js` on that device and choose the matching role — see **[Installation](https://github.com/[USER]/PATTI/wiki/Installation)** for the full walkthrough, MQTT mesh setup, and environment variable reference.
+To add a **PATTI Client** (a second full PATTI instance, e.g. on a Raspberry Pi, sharing the Host's LLM) or a lightweight **Node** (ESP32/Raspberry Pi sensor device), run `node patti-cli.js` on that device and choose the matching role — see **[Installation](https://github.com/jjuhric/PATTI/wiki/Installation)** for the full walkthrough, MQTT mesh setup, and environment variable reference.
 
 ### LAN HTTPS (Android/PWA install)
 
@@ -126,13 +126,13 @@ npm run coverage        # coverage report, 70% statement/line threshold enforced
 
 | Page | What it covers |
 | --- | --- |
-| **[Home](https://github.com/[USER]/PATTI/wiki)** | Project overview, what problem it solves, and how to use the wiki as a learning resource |
-| **[Architecture](https://github.com/[USER]/PATTI/wiki/Architecture)** | Full system topology, technology choices and why, agent delegation pipeline, security boundaries |
-| **[Installation](https://github.com/[USER]/PATTI/wiki/Installation)** | Step-by-step setup for every device role, full `.env` reference |
-| **[Usage](https://github.com/[USER]/PATTI/wiki/Usage)** | How to actually use the assistant day to day |
-| **[Codebase Documentation](https://github.com/[USER]/PATTI/wiki/Codebase-Documentation)** | What every folder and file does and why it's designed that way |
-| **[Contributing](https://github.com/[USER]/PATTI/wiki/Contributing)** | How to author and mount a custom tool |
-| **[FAQ](https://github.com/[USER]/PATTI/wiki/FAQ)** | Common setup and troubleshooting questions |
+| **[Home](https://github.com/jjuhric/PATTI/wiki)** | Project overview, what problem it solves, and how to use the wiki as a learning resource |
+| **[Architecture](https://github.com/jjuhric/PATTI/wiki/Architecture)** | Full system topology, technology choices and why, agent delegation pipeline, security boundaries |
+| **[Installation](https://github.com/jjuhric/PATTI/wiki/Installation)** | Step-by-step setup for every device role, full `.env` reference |
+| **[Usage](https://github.com/jjuhric/PATTI/wiki/Usage)** | How to actually use the assistant day to day |
+| **[Codebase Documentation](https://github.com/jjuhric/PATTI/wiki/Codebase-Documentation)** | What every folder and file does and why it's designed that way |
+| **[Contributing](https://github.com/jjuhric/PATTI/wiki/Contributing)** | How to author and mount a custom tool |
+| **[FAQ](https://github.com/jjuhric/PATTI/wiki/FAQ)** | Common setup and troubleshooting questions |
 
 ## License
 
