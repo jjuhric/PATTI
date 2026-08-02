@@ -74,8 +74,45 @@ describe('Database Migration Tests', () => {
 
     const memoryCols = await migratedDb.all('PRAGMA table_info(memories)');
     expect(memoryCols.some(c => c.name === 'embedding')).toBe(true);
+    // A legacy table this bare doesn't even have created_at - the backfill below must not
+    // have thrown trying to reference a column that was never there to begin with.
+    expect(memoryCols.some(c => c.name === 'last_recalled_at')).toBe(true);
+    expect(memoryCols.some(c => c.name === 'recall_count')).toBe(true);
 
     const { closeDb } = require('../db');
+    await closeDb();
+  });
+
+  test('backfills last_recalled_at to created_at for pre-existing memory rows on migration', async () => {
+    const sqlite3 = require('sqlite3');
+    const { open } = require('sqlite');
+
+    const db = await open({ filename: testDbPath, driver: sqlite3.Database });
+
+    // A legacy schema one step newer than the bare-bones one above - has created_at (every
+    // real historical schema.sql version has always had this), but predates recall tracking.
+    await db.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password_hash TEXT);
+      CREATE TABLE user_settings (user_id INTEGER PRIMARY KEY, provider TEXT, model_name TEXT, gemini_key TEXT);
+      CREATE TABLE memories (
+        id INTEGER PRIMARY KEY, user_id INTEGER, content TEXT, level TEXT,
+        expires_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    const userResult = await db.run("INSERT INTO users (username, password_hash) VALUES ('legacyuser', 'hashed')");
+    await db.run(
+      "INSERT INTO memories (user_id, content, level, created_at) VALUES (?, ?, ?, ?)",
+      [userResult.lastID, 'Pre-existing long-term fact', 'long-term', '2026-01-01 00:00:00']
+    );
+    await db.close();
+
+    const { getDb, closeDb } = require('../db');
+    const migratedDb = await getDb();
+
+    const row = await migratedDb.get('SELECT created_at, last_recalled_at, recall_count FROM memories WHERE content = ?', ['Pre-existing long-term fact']);
+    expect(row.last_recalled_at).toBe(row.created_at);
+    expect(row.recall_count).toBe(0);
+
     await closeDb();
   });
 

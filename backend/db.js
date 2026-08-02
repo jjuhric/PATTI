@@ -148,6 +148,23 @@ async function getDb() {
     if (!hasAgentName) {
       await dbConnection.run('ALTER TABLE memories ADD COLUMN agent_name TEXT');
     }
+    const hasLastRecalledAt = memoriesColumns.some(col => col.name === 'last_recalled_at');
+    if (!hasLastRecalledAt) {
+      await dbConnection.run('ALTER TABLE memories ADD COLUMN last_recalled_at DATETIME');
+      // Backfill existing rows to their own created_at rather than leaving NULL - otherwise
+      // the first consolidation pass would see every pre-existing long-term memory as "never
+      // recalled" and mass-retire anything older than the staleness window, purely because
+      // recall tracking didn't exist yet, not because the memory was actually unused.
+      // Guarded on created_at actually existing - true for every real schema.sql version,
+      // but not for the deliberately bare-bones legacy table shape used in migration tests.
+      if (memoriesColumns.some(col => col.name === 'created_at')) {
+        await dbConnection.run('UPDATE memories SET last_recalled_at = created_at WHERE last_recalled_at IS NULL');
+      }
+    }
+    const hasRecallCount = memoriesColumns.some(col => col.name === 'recall_count');
+    if (!hasRecallCount) {
+      await dbConnection.run('ALTER TABLE memories ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0');
+    }
 
     // Migrate network_nodes to add new columns if missing
     const nodeColumns = await dbConnection.all('PRAGMA table_info(network_nodes)');

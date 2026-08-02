@@ -284,6 +284,12 @@ async function storeMemory(text, metadata = {}) {
   }
 }
 
+async function deleteMemory(text) {
+  const table = await getMemoryTable();
+  const escaped = text.replace(/'/g, "''");
+  await table.delete(`text = '${escaped}'`);
+}
+
 async function searchMemory(query, limit = 3) {
   try {
     const vector = await getXenovaEmbedding(query);
@@ -581,6 +587,7 @@ module.exports = {
   getSemanticSimilarity,
   storeMemory,
   searchMemory,
+  deleteMemory,
   storeLearnedBehavior,
   searchLearnedBehaviors,
   storeSystemDoc,
