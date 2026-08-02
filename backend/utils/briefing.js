@@ -1,8 +1,21 @@
 const { handleWeatherTool } = require('../tools/weather_tool');
 const { handleGoogleNewsTool } = require('../ai');
-const { runWorkerAgent } = require('./agents');
-const { decrypt } = require('./crypto');
+const { generateText, buildSettingsForUser } = require('./llm_text');
 const logger = require('./logger');
+
+/**
+ * Resolves "now" (or an optional past `at` timestamp) into a given IANA timezone's local hour
+ * (0-23) and calendar date (YYYY-MM-DD), with no external API call - `users.timezone` is
+ * already a real IANA zone string, so Intl can do this directly.
+ */
+function getUserLocalNow(timezone, at = new Date()) {
+  const tz = timezone || 'America/Chicago';
+  const hourStr = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', hour12: false }).format(at);
+  // Some ICU versions format midnight as "24" rather than "00" - normalize either way.
+  const hour = parseInt(hourStr, 10) % 24;
+  const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(at); // YYYY-MM-DD
+  return { hour, dateStr };
+}
 
 async function generateDailyBriefing(db, userId) {
   try {
@@ -10,41 +23,29 @@ async function generateDailyBriefing(db, userId) {
     const user = await db.get('SELECT * FROM users WHERE id = ?', [userId]);
     if (!user) return null;
 
-    const settings = await db.get('SELECT * FROM user_settings WHERE user_id = ?', [userId]);
-    const activeSettings = settings || {};
+    const userTimezone = user.timezone || 'America/Chicago';
+    const { dateStr: todayStr } = getUserLocalNow(userTimezone);
 
-    // 2. Fetch today's calendar events
-    const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    // 2. Fetch today's calendar events (today, in the USER's own local date, not UTC)
     const events = await db.all(
-      `SELECT * FROM calendar_events 
-       WHERE user_id = ? 
+      `SELECT * FROM calendar_events
+       WHERE user_id = ?
          AND (start_time LIKE ? OR start_time LIKE ?)`,
       [userId, `${todayStr}%`, `%${todayStr}%`]
     );
-    const eventsText = events.length > 0 
+    const eventsText = events.length > 0
       ? events.map(e => `- [${e.start_time}] ${e.title}: ${e.description || 'No desc'}`).join('\n')
       : 'No events scheduled for today.';
 
-    // 3. Fetch weather (using mock fallback if weather api key is missing)
-    let weatherText = 'Weather info unavailable. Please configure OpenWeatherMap API Key.';
-    if (user.weather_api_key && user.zipcode) {
-      try {
-        const decryptedKey = decrypt(user.weather_api_key);
-        weatherText = await handleWeatherTool('current', {
-          zipcode: user.zipcode,
-          country: user.country || 'US',
-          unit: user.temp_unit || 'imperial',
-          apiKey: decryptedKey
-        });
-      } catch (err) {
-        weatherText = `Error fetching weather: ${err.message}`;
-      }
-    }
+    // 3. Fetch weather - handleWeatherTool self-fetches zipcode/country/temp_unit/API key from
+    // the users row by userId (it no longer accepts them as params) and already returns a
+    // correct, human-readable error string if something's missing/misconfigured.
+    const weatherText = await handleWeatherTool(db, userId, 'current', {});
 
     // 4. Fetch memories
     const memories = await db.all(
-      `SELECT content FROM memories 
-       WHERE user_id = ? 
+      `SELECT content FROM memories
+       WHERE user_id = ?
          AND (expires_at IS NULL OR expires_at > datetime('now'))`,
       [userId]
     );
@@ -87,45 +88,15 @@ ${newsText}
 Generate the daily briefing now. Keep it professional, highly structured, and warm.
 `;
 
-    // Construct LLM configuration settings
-    const llmSettings = {
-      db,
-      userId,
-      provider: activeSettings.provider || 'local',
-      modelName: activeSettings.model_name || 'qwen2.5-coder-7b-instruct',
-      onlineProvider: activeSettings.online_provider || 'gemini',
-      onlineKey: decrypt(activeSettings.online_key),
-      geminiKey: decrypt(activeSettings.gemini_key),
-      localBaseUrl: activeSettings.local_url || process.env.LOCAL_LLM_URL || 'http://localhost:1234/v1',
-      localApiKey: decrypt(activeSettings.local_key),
-      localApiStyle: activeSettings.local_api_style || 'openai',
-      onlineUrl: activeSettings.online_url
-    };
-
-    // Use supervisor model if override is present
-    let actualModel = activeSettings.model_name;
-    if (activeSettings.provider === 'local') {
-      actualModel = activeSettings.preferred_local_model || activeSettings.model_name || 'qwen2.5-coder-7b-instruct';
-    } else if (activeSettings.provider !== 'local' && activeSettings.preferred_online_model) {
-      actualModel = activeSettings.preferred_online_model;
-    }
-    llmSettings.modelName = actualModel;
-
-    const aiResponse = await runWorkerAgent(
-      'daily_briefing',
-      llmSettings,
-      userPrompt,
-      db,
-      userId
-    );
-
-    let briefingContent = '';
-    try {
-      const parsed = JSON.parse(aiResponse);
-      briefingContent = parsed.data?.briefing || parsed.summary || String(aiResponse);
-    } catch (e) {
-      briefingContent = aiResponse.thought || aiResponse.response || String(aiResponse);
-    }
+    // A single, direct text-completion call - not runWorkerAgent's multi-turn tool-calling
+    // loop, which is the wrong shape for this: all the data above was already gathered by this
+    // function itself, so there's nothing left for a "worker agent" to decide or tool-call
+    // about, and runWorkerAgent's generic final-response schema ({status, summary, data}) has
+    // no way to carry a full markdown digest anyway. generateText/buildSettingsForUser
+    // (utils/llm_text.js) are already built for exactly this "background LLM call with no live
+    // HTTP request in scope" case, already queued through ai_queue, already retry-with-backoff.
+    const llmSettings = await buildSettingsForUser(db, userId);
+    const briefingContent = await generateText(llmSettings, systemPrompt, userPrompt);
 
     // 7. Find or create "Daily Briefings" chat
     let chat = await db.get('SELECT * FROM chats WHERE user_id = ? AND title = ?', [userId, 'Daily Briefings']);
@@ -143,38 +114,62 @@ Generate the daily briefing now. Keep it professional, highly structured, and wa
     // 9. Update last_briefing_at
     await db.run('UPDATE users SET last_briefing_at = datetime(\'now\') WHERE id = ?', [userId]);
 
+    // 10. Let the user know it's ready - matches the pattern every other background daemon in
+    // this codebase already uses; the frontend's SSE listener already renders any unrecognized
+    // alert `type` as a toast, so this needs no frontend changes.
+    try {
+      const { broadcastAlert } = require('../routes/alerts');
+      broadcastAlert({ type: 'info', message: 'Your daily briefing is ready.', timestamp: new Date().toISOString() });
+    } catch (alertErr) {
+      logger.warn('Failed to broadcast daily briefing alert:', alertErr.message);
+    }
+
     return briefingContent;
   } catch (err) {
-    console.error('Error compiling daily briefing:', err);
+    logger.error('Error compiling daily briefing:', err);
     throw err;
   }
 }
 
-// Background scheduler checker
+// Background scheduler checker. A single 5-minute poll shared across all users - per-user
+// eligibility (local hour vs. their briefing_hour, whether they've already been briefed
+// "today" in their own timezone) is resolved individually in JS via getUserLocalNow, since a
+// single shared SQL comparison can't correctly gate users across different timezones at once.
+let isRunning = false;
 function startBriefingScheduler(db) {
-  // Check every 5 minutes
   setInterval(async () => {
+    if (isRunning) return;
+    isRunning = true;
     try {
-      const currentHour = new Date().getHours();
-      // Find users who haven't had a briefing today, or never had one, and current time >= briefing_hour
-      const users = await db.all(
-        `SELECT * FROM users 
-         WHERE (last_briefing_at IS NULL OR date(last_briefing_at) < date('now'))
-           AND ? >= briefing_hour`,
-        [currentHour]
+      // Deliberately generous prefilter (UTC-vs-local day boundaries can differ by up to a
+      // day) - this only needs to be a cheap superset; getUserLocalNow makes the real call.
+      const candidates = await db.all(
+        `SELECT * FROM users WHERE last_briefing_at IS NULL OR date(last_briefing_at) < date('now', '-1 day')`
       );
 
-      for (const user of users) {
-        console.log(`Triggering daily briefing schedule for user: ${user.username}`);
+      for (const user of candidates) {
+        const tz = user.timezone || 'America/Chicago';
+        const { hour, dateStr } = getUserLocalNow(tz);
+        const lastLocalDate = user.last_briefing_at
+          ? getUserLocalNow(tz, new Date(user.last_briefing_at + 'Z')).dateStr
+          : null;
+
+        if (lastLocalDate === dateStr) continue; // already briefed today, in their own timezone
+        if (hour < (user.briefing_hour ?? 7)) continue; // not their briefing hour yet
+
+        logger.info(`Triggering daily briefing schedule for user: ${user.username}`);
         await generateDailyBriefing(db, user.id);
       }
     } catch (err) {
-      console.error('Briefing scheduler checking loop encountered error:', err);
+      logger.error('Briefing scheduler checking loop encountered error:', err);
+    } finally {
+      isRunning = false;
     }
   }, 300000); // 5 minutes
 }
 
 module.exports = {
   generateDailyBriefing,
-  startBriefingScheduler
+  startBriefingScheduler,
+  getUserLocalNow
 };
