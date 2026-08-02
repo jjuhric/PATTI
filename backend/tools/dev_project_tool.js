@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { broadcastAlert } = require('../routes/alerts');
+const { notifyUser } = require('../utils/notifications');
 const { generateText, buildSettingsForUser } = require('../utils/llm_text');
 const { resolveSafePath } = require('../utils/pathSecurity');
 const { handleJobStoreTool, storeChunked } = require('./job_store_tool');
@@ -281,13 +282,13 @@ async function runDevProjectJob(db, jobId, userId, spec, targetDir) {
       `**Location on this machine:**\n\`${targetDir}\`\n\n` +
       `${runInstructions}\n\n${qaNote}${verifyNote}${skippedNote}\n\n### Files\n${writtenFiles.map((f) => `- ${f}`).join('\n')}`;
 
-    await postToResultsChat(db, userId, summary);
+    const resultsChatId = await postToResultsChat(db, userId, summary);
     await db.run(
       "UPDATE dev_build_jobs SET status = 'completed', output_summary = ?, completed_at = datetime('now') WHERE job_id = ?",
       [summary, jobId]
     );
     broadcastAgentStatus(false, null);
-    broadcastAlert({ type: 'info', message: `Your project build is ready in "${targetDir}".` });
+    await notifyUser(db, userId, { type: 'info', message: `Your project build is ready in "${targetDir}".`, chatId: resultsChatId });
   } catch (err) {
     logger.error('[Dev Project] Job failed:', err);
     await finishJobWithFailure(db, userId, jobId, targetDir, err.message);
@@ -742,13 +743,13 @@ End your review with a short verdict line: either "VERDICT: Good as-is" or "VERD
     const reviewOutput = await runWorkerAgent('qa_engineer', settings, reviewTask, db, userId);
     const summary = `# Review: ${path.basename(targetDir)}\n\n**Location:** \`${targetDir}\`\n\n${reviewOutput}`;
 
-    await postToResultsChat(db, userId, summary);
+    const resultsChatId = await postToResultsChat(db, userId, summary);
     await db.run(
       "UPDATE dev_build_jobs SET status = 'completed', output_summary = ?, completed_at = datetime('now') WHERE job_id = ?",
       [summary, jobId]
     );
     broadcastAgentStatus(false, null);
-    broadcastAlert({ type: 'info', message: `Review of "${targetDir}" is ready.` });
+    await notifyUser(db, userId, { type: 'info', message: `Review of "${targetDir}" is ready.`, chatId: resultsChatId });
   } catch (err) {
     logger.error('[Dev Project] Review job failed:', err);
     await finishJobWithFailure(db, userId, jobId, targetDir, err.message);
@@ -832,13 +833,13 @@ async function runFixProjectJob(db, jobId, userId, instructions, targetDir) {
       `${verification.attempted ? (verification.passed ? 'Re-ran the project for real and confirmed it now works:\n' + verification.evidence : 'Re-ran the project for real - it still has open issues, reported honestly:\n' + verification.evidence) : 'No setup/verify commands were determined for this project, so no execution verification was performed.'}\n\n` +
       `Full documentation of every fix: \`${fixLogPath}\`\n\n### Files fixed\n${fixLog.length > 0 ? fixLog.map((f) => `- ${f.file}: ${f.problem}`).join('\n') : '(none needed)'}`;
 
-    await postToResultsChat(db, userId, summary);
+    const resultsChatId = await postToResultsChat(db, userId, summary);
     await db.run(
       "UPDATE dev_build_jobs SET status = 'completed', output_summary = ?, completed_at = datetime('now') WHERE job_id = ?",
       [summary, jobId]
     );
     broadcastAgentStatus(false, null);
-    broadcastAlert({ type: 'info', message: `Fixes for "${targetDir}" are ready.` });
+    await notifyUser(db, userId, { type: 'info', message: `Fixes for "${targetDir}" are ready.`, chatId: resultsChatId });
   } catch (err) {
     logger.error('[Dev Project] Fix job failed:', err);
     await finishJobWithFailure(db, userId, jobId, targetDir, err.message);
@@ -856,17 +857,18 @@ async function postToResultsChat(db, userId, content) {
     chat = { id: result.lastID, title: RESULTS_CHAT_TITLE };
   }
   await db.run('INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)', [chat.id, 'assistant', content]);
+  return chat.id;
 }
 
 async function finishJobWithFailure(db, userId, jobId, targetDir, message) {
   try {
-    await postToResultsChat(db, userId, `# Project build failed: ${targetDir}\n\n${message}`);
+    const resultsChatId = await postToResultsChat(db, userId, `# Project build failed: ${targetDir}\n\n${message}`);
     await db.run(
       "UPDATE dev_build_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE job_id = ?",
       [message, jobId]
     );
     broadcastAgentStatus(false, null);
-    broadcastAlert({ type: 'error', message: `Project build in "${targetDir}" failed.` });
+    await notifyUser(db, userId, { type: 'error', message: `Project build in "${targetDir}" failed.`, chatId: resultsChatId });
   } catch (err) {
     logger.error('[Dev Project] Failed to record job failure:', err);
   }

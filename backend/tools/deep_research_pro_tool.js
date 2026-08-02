@@ -2,7 +2,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { broadcastAlert } = require('../routes/alerts');
+const { notifyUser } = require('../utils/notifications');
 
 const RESULTS_CHAT_TITLE = 'Deep Research Results';
 
@@ -176,12 +176,12 @@ async function finalizeJob(db, userId, jobId, topic, mode, exitCode, stdout, std
   // Post the message BEFORE flipping the job to 'completed': callers (e.g. check_status,
   // or this same test suite) may poll job status as their "is it done" signal, so status
   // must only ever say 'completed' once the result is actually there to see.
-  await postToResultsChat(db, userId, message);
+  const resultsChatId = await postToResultsChat(db, userId, message);
   await db.run(
     "UPDATE deep_research_jobs SET status = 'completed', report_path = ?, completed_at = datetime('now') WHERE job_id = ?",
     [absoluteReportPath, jobId]
   );
-  broadcastAlert({ type: 'info', message: `Deep research on "${topic}" is ready.` });
+  await notifyUser(db, userId, { type: 'info', message: `Deep research on "${topic}" is ready.`, chatId: resultsChatId });
 }
 
 async function handleCheckStatus(db, userId, params = {}) {
@@ -207,12 +207,12 @@ async function handleCheckStatus(db, userId, params = {}) {
 
 async function finishJobWithFailure(db, userId, jobId, topic, message) {
   try {
-    await postToResultsChat(db, userId, `# Deep research failed: ${topic}\n\n${message}`);
+    const resultsChatId = await postToResultsChat(db, userId, `# Deep research failed: ${topic}\n\n${message}`);
     await db.run(
       "UPDATE deep_research_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE job_id = ?",
       [message, jobId]
     );
-    broadcastAlert({ type: 'error', message: `Deep research on "${topic}" failed.` });
+    await notifyUser(db, userId, { type: 'error', message: `Deep research on "${topic}" failed.`, chatId: resultsChatId });
   } catch (err) {
     console.error('Deep research pro: failed to record job failure', err);
   }
@@ -225,6 +225,7 @@ async function postToResultsChat(db, userId, content) {
     chat = { id: result.lastID, title: RESULTS_CHAT_TITLE };
   }
   await db.run('INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)', [chat.id, 'assistant', content]);
+  return chat.id;
 }
 
 function extractLabeledPath(stdout, label) {

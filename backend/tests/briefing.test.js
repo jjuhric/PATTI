@@ -139,8 +139,16 @@ describe('Daily Briefing Generation Tests', () => {
     expect(mockBroadcastAlert).toHaveBeenCalledTimes(1);
     expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({
       type: 'info',
-      message: expect.stringContaining('briefing')
+      message: expect.stringContaining('briefing'),
+      notificationId: expect.anything()
     }));
+
+    // notifyUser (utils/notifications.js) persists the notification before broadcasting it,
+    // so it survives even if no tab was open to catch the live broadcastAlert above.
+    expect(mockDb.run).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO notifications'),
+      expect.arrayContaining([1, 'info'])
+    );
   });
 
   test('generateDailyBriefing handles overall failure throws', async () => {

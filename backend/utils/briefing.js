@@ -114,14 +114,13 @@ Generate the daily briefing now. Keep it professional, highly structured, and wa
     // 9. Update last_briefing_at
     await db.run('UPDATE users SET last_briefing_at = datetime(\'now\') WHERE id = ?', [userId]);
 
-    // 10. Let the user know it's ready - matches the pattern every other background daemon in
-    // this codebase already uses; the frontend's SSE listener already renders any unrecognized
-    // alert `type` as a toast, so this needs no frontend changes.
+    // 10. Let the user know it's ready - persisted (utils/notifications.js) so it survives
+    // even if no tab was open to catch the live broadcastAlert it also fires.
     try {
-      const { broadcastAlert } = require('../routes/alerts');
-      broadcastAlert({ type: 'info', message: 'Your daily briefing is ready.', timestamp: new Date().toISOString() });
+      const { notifyUser } = require('./notifications');
+      await notifyUser(db, userId, { type: 'info', message: 'Your daily briefing is ready.', chatId: chat.id });
     } catch (alertErr) {
-      logger.warn('Failed to broadcast daily briefing alert:', alertErr.message);
+      logger.warn('Failed to send daily briefing notification:', alertErr.message);
     }
 
     return briefingContent;

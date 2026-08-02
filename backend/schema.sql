@@ -328,4 +328,21 @@ CREATE TABLE IF NOT EXISTS dev_build_jobs (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- Durable record of a background job's completion/failure alert, so a notification
+-- survives even if no browser tab was connected to the SSE stream (routes/alerts.js)
+-- when broadcastAlert() fired - see utils/notifications.js. Distinct from the ephemeral
+-- SSE broadcast itself - this is the persistence + unread-tracking layer on top of it.
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  type TEXT NOT NULL DEFAULT 'info', -- 'info' | 'warning' | 'error'
+  message TEXT NOT NULL,
+  chat_id INTEGER, -- nullable; the results/briefing chat this notification points to, if any
+  is_read INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read);
+
 

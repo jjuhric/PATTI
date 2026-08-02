@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Menu, ExternalLink, Network } from 'lucide-react';
 import Auth from './components/Auth';
+import NotificationBell from './components/NotificationBell';
 import Sidebar from './components/Sidebar';
 import ChatPane from './components/ChatPane';
 import CalendarPane from './components/CalendarPane';
@@ -96,6 +97,10 @@ function App() {
   const showToast = (message, type = 'info') => {
     setToast({ message, type });
   };
+
+  // Bumped whenever a persisted (notifyUser-originated) alert arrives over SSE, so
+  // NotificationBell knows to refetch - see the alert.notificationId check below.
+  const [notifRefreshTick, setNotifRefreshTick] = useState(0);
 
   // Navigation and panels
   const [chats, setChats] = useState([]);
@@ -233,6 +238,13 @@ function App() {
             });
           }
           showToast(alert.message, alert.type || 'info');
+
+          // A real, persisted notification (utils/notifications.js) - refresh the bell's
+          // unread count/list rather than inferring it from `type`, which many other
+          // (non-persisted) alerts also use.
+          if (alert.notificationId) {
+            setNotifRefreshTick((t) => t + 1);
+          }
 
           // Real OS notification popup for a completed background job, only when the tab
           // isn't currently visible (avoids a redundant popup on top of the toast they're
@@ -485,6 +497,15 @@ function App() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleOpenNotificationChat = (chatId) => {
+    // The results/briefing chat a notification points to may have been created by a
+    // background job since the last fetchChats() call - refresh the list so Sidebar
+    // actually shows/highlights it, not just loads its messages by id.
+    fetchChats();
+    setActiveChatId(chatId);
+    handleTabChange('chat');
   };
 
   const deleteChat = (id, e) => {
@@ -1197,6 +1218,8 @@ function App() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+
+            <NotificationBell token={token} refreshSignal={notifRefreshTick} onOpenChat={handleOpenNotificationChat} />
 
             <div className="header-stats-group">
               <div className="header-stat-badge" title="Tokens used since this tab was opened">

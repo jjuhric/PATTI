@@ -282,6 +282,10 @@ describe('handleDevProjectTool', () => {
 
     expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'info' }));
 
+    const notification = await db.get('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+    expect(notification.type).toBe('info');
+    expect(notification.chat_id).toBe(chat.id);
+
     // Live progress signal: busy near the start, and explicitly cleared (active: false)
     // once the job is truly done - this is what the frontend locks/unlocks chat input on.
     const agentStatusCalls = mockBroadcastAlert.mock.calls
@@ -425,6 +429,10 @@ describe('handleDevProjectTool', () => {
     const message = await db.get('SELECT * FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', [chat.id]);
     expect(message.content).toMatch(/Project build failed/);
     expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+
+    const notification = await db.get('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+    expect(notification.type).toBe('error');
+    expect(notification.chat_id).toBe(chat.id);
 
     // Even on failure, the busy signal must be explicitly cleared - otherwise the chat
     // would stay locked forever after a failed build.

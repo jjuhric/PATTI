@@ -459,6 +459,149 @@ select.form-control option {
   box-shadow: 0 0 8px var(--accent-primary);
 }
 
+/* Notification bell: durable, persisted background-job alerts (R2) - distinct from the
+   ephemeral toast, which still fires live but disappears after 4s either way. */
+.notification-bell-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.notification-bell-btn {
+  position: relative;
+}
+
+.notification-bell-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent-primary);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.notification-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--bg-glass);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 50;
+}
+
+.notification-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-glass);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  position: sticky;
+  top: 0;
+  background: inherit;
+}
+
+.notification-mark-all-btn {
+  background: none;
+  border: none;
+  color: var(--accent-primary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.notification-empty {
+  padding: 20px 14px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.notification-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.notification-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-glass);
+}
+
+.notification-item:last-child {
+  border-bottom: none;
+}
+
+.notification-item.clickable {
+  cursor: pointer;
+}
+
+.notification-item.clickable:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.notification-item.unread {
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.notification-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.notification-dot.info {
+  background: var(--accent-secondary);
+}
+
+.notification-dot.error {
+  background: #ef4444;
+}
+
+.notification-dot.warning {
+  background: #f59e0b;
+}
+
+.notification-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notification-item-message {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  line-height: 1.35;
+  word-wrap: break-word;
+}
+
+.notification-item-time {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
 /* Header stats: Tokens This Session | Web Search Credits | Current IP - fills the space
    between the wordmark and the model badge, freed up by removing the broken logo image. */
 .header-stats-group {

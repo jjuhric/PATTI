@@ -137,6 +137,10 @@ describe('handleCourseBuilderTool', () => {
     expect(message.content).toContain('Intro to Testing');
 
     expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'info' }));
+
+    const notification = await db.get('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+    expect(notification.type).toBe('info');
+    expect(notification.chat_id).toBe(chat.id);
   });
 
   test('format: "md" writes a plain markdown file directly, bypassing the document generator', async () => {
@@ -170,6 +174,10 @@ describe('handleCourseBuilderTool', () => {
     const message = await db.get('SELECT * FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', [chat.id]);
     expect(message.content).toMatch(/Course generation failed/);
     expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+
+    const notification = await db.get('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
+    expect(notification.type).toBe('error');
+    expect(notification.chat_id).toBe(chat.id);
   });
 
   test('check_status reports "no jobs" for a fresh user', async () => {
