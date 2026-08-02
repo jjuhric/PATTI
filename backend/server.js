@@ -310,8 +310,7 @@ const startScheduler = () => {
     const { getDb } = require('./db');
     const { startBriefingScheduler } = require('./utils/briefing');
     getDb().then(db => {
-      // Temporarily disabled daily-notifications as it is not working for now.
-      // startBriefingScheduler(db);
+      startBriefingScheduler(db);
     }).catch(err => {
       logger.error('Failed to start briefing scheduler:', err);
     });
