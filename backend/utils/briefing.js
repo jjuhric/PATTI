@@ -128,8 +128,16 @@ function startBriefingScheduler(db) {
         if (lastLocalDate === dateStr) continue; // already briefed today, in their own timezone
         if (hour < (user.briefing_hour ?? 7)) continue; // not their briefing hour yet
 
-        logger.info(`Triggering daily briefing schedule for user: ${user.username}`);
-        await generateDailyBriefing(db, user.id);
+        try {
+          logger.info(`Triggering daily briefing schedule for user: ${user.username}`);
+          await generateDailyBriefing(db, user.id);
+        } catch (err) {
+          // One user's briefing failing (bad LLM config, provider outage, etc.) must not
+          // abort the loop and silently deny every other candidate user their briefing for
+          // this whole tick - last_briefing_at is untouched on failure either way, so this
+          // user naturally retries next tick without blocking anyone else in the meantime.
+          logger.error(`Daily briefing failed for user ${user.username}:`, err);
+        }
       }
     } catch (err) {
       logger.error('Briefing scheduler checking loop encountered error:', err);

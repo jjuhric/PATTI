@@ -248,5 +248,44 @@ describe('Daily Briefing Generation Tests', () => {
 
       expect(mockDb.all).toHaveBeenCalled();
     });
+
+    test('one user\'s briefing failing does not block briefings for other eligible users in the same tick', async () => {
+      jest.setSystemTime(new Date('2026-07-30T15:00:00Z')); // America/Chicago local hour 10am
+
+      const failingUser = { id: 1, username: 'failing', timezone: 'America/Chicago', briefing_hour: 7, last_briefing_at: null };
+      const healthyUser = { id: 2, username: 'healthy', timezone: 'America/Chicago', briefing_hour: 7, last_briefing_at: null };
+
+      mockDb.all.mockImplementation(async (query) => {
+        if (query.includes('FROM users')) return [failingUser, healthyUser];
+        return [];
+      });
+      mockDb.get.mockImplementation(async (query, params) => {
+        if (query.includes('FROM users')) {
+          return params[0] === 1 ? failingUser : healthyUser;
+        }
+        if (query.includes('FROM chats')) return { id: 1, title: 'Daily Briefings' };
+        return null;
+      });
+      handleWeatherTool.mockResolvedValue('Sunny');
+      require('../tools/google_news_tool').handleGoogleNewsTool.mockResolvedValue('News');
+
+      // Matches the real symptom: the LLM call for the first (failing) user's briefing
+      // throws every time (e.g. a broken/misconfigured local LLM endpoint), which used to
+      // propagate straight out of the per-user loop and skip every remaining candidate.
+      generateText.mockRejectedValueOnce(new Error('LLM error: unexpected response')).mockResolvedValueOnce('Briefing content');
+
+      startBriefingScheduler(mockDb);
+      await jest.advanceTimersByTimeAsync(300000);
+
+      // Both users were attempted despite the first one's briefing throwing.
+      expect(buildSettingsForUser).toHaveBeenCalledTimes(2);
+      expect(buildSettingsForUser).toHaveBeenCalledWith(mockDb, 1);
+      expect(buildSettingsForUser).toHaveBeenCalledWith(mockDb, 2);
+
+      // The failing user's last_briefing_at update never happened; the healthy user's did.
+      const briefingUpdateCalls = mockDb.run.mock.calls.filter(call => call[0].includes('UPDATE users SET last_briefing_at'));
+      expect(briefingUpdateCalls.some(call => call[1][0] === 1)).toBe(false);
+      expect(briefingUpdateCalls.some(call => call[1][0] === 2)).toBe(true);
+    });
   });
 });
