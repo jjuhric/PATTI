@@ -205,7 +205,7 @@ export default function RpiTerminalModal({ isOpen, onClose, node, token, onNodeU
               <h3 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1.15rem', fontWeight: 600 }}>
                 SSH Terminal - {node.node_name}
               </h3>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                 {node.ip_address} ({node.device_type})
               </span>
             </div>
@@ -271,7 +271,7 @@ export default function RpiTerminalModal({ isOpen, onClose, node, token, onNodeU
                   border: '1px solid rgba(255,255,255,0.05)'
                 }}
               />
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
                 <span>Type directly in the shell. Use standard Linux commands.</span>
                 <span>Port: 22</span>
               </div>
