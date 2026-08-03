@@ -104,6 +104,11 @@ global.fetch = vi.fn().mockImplementation((url, options) => {
   });
 });
 
+// Captured so tests that run after "renders SetupWizard" (which intentionally overwrites
+// global.fetch and never restores it) can still explicitly opt back into the real
+// authenticated-workspace mock, instead of depending on declaration order for correctness.
+const authenticatedWorkspaceFetchMock = global.fetch;
+
 describe('Main App Component Tests', () => {
   test('renders authenticated main workspace layout successfully', async () => {
     // Render under act to handle state updates from useEffect API fetches
@@ -162,5 +167,44 @@ describe('Main App Component Tests', () => {
     });
 
     expect(screen.getByText('Device Selection')).toBeInTheDocument();
+  });
+
+  test('a notif_sync alert over the SSE stream refetches notifications without showing a toast', async () => {
+    // jsdom doesn't implement EventSource - App.jsx's alert-stream effect checks for this
+    // and no-ops when it's undefined, which is why every other test in this file never
+    // actually exercises it. Define a minimal mock just for this test so the effect
+    // connects and captures the instance, letting us simulate a server-pushed message.
+    global.fetch = authenticatedWorkspaceFetchMock;
+
+    let capturedSource;
+    class MockEventSource {
+      constructor(url) {
+        this.url = url;
+        capturedSource = this;
+      }
+      close() {}
+    }
+    const originalEventSource = global.EventSource;
+    global.EventSource = MockEventSource;
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    expect(capturedSource).toBeDefined();
+    const notificationsCallCountBefore = global.fetch.mock.calls.filter(
+      (call) => String(call[0]).includes('/api/notifications')
+    ).length;
+
+    await act(async () => {
+      capturedSource.onmessage({ data: JSON.stringify({ type: 'notif_sync' }) });
+    });
+
+    const notificationsCallCountAfter = global.fetch.mock.calls.filter(
+      (call) => String(call[0]).includes('/api/notifications')
+    ).length;
+    expect(notificationsCallCountAfter).toBeGreaterThan(notificationsCallCountBefore);
+
+    global.EventSource = originalEventSource;
   });
 });

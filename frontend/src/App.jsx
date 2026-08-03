@@ -230,6 +230,14 @@ function App() {
             return;
           }
 
+          // Silent cross-tab sync signal (a read/read-all in another tab for this same
+          // user) - no message text, no toast/popup, just a refetch so this tab's bell
+          // badge doesn't keep showing a stale unread count until its own next alert.
+          if (alert.type === 'notif_sync') {
+            setNotifRefreshTick((t) => t + 1);
+            return;
+          }
+
           if (alert.type === 'error' || alert.type === 'warning') {
             setPopupAlert({
               type: alert.type,
