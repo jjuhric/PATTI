@@ -692,6 +692,38 @@ describe('Multi-Agent System & Tools Tests', () => {
       global.fetch = globalFetch;
     });
 
+    test('runAgentTurn retries a transient fetch failure with backoff and succeeds', async () => {
+      const globalFetch = global.fetch;
+      let callCount = 0;
+      global.fetch = jest.fn(async () => {
+        callCount++;
+        if (callCount < 2) {
+          throw new Error('fetch failed');
+        }
+        return {
+          ok: true,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ choices: [{ message: { content: JSON.stringify({ thought: 'recovered', tool: 'none' }) } }] })
+        };
+      });
+
+      const result = await runAgentTurn('news_agent', 'system prompt', { provider: 'local', localApiStyle: 'lm-studio', localBaseUrl: 'http://lm-studio' }, 'hello', []);
+      expect(result.thought).toBe('recovered');
+      expect(callCount).toBe(2);
+      global.fetch = globalFetch;
+    }, 15000);
+
+    test('runAgentTurn throws after exhausting retries on repeated fetch failure', async () => {
+      const globalFetch = global.fetch;
+      global.fetch = jest.fn(async () => {
+        throw new Error('fetch failed');
+      });
+
+      await expect(runAgentTurn('news_agent', 'system prompt', { provider: 'local', localApiStyle: 'lm-studio', localBaseUrl: 'http://lm-studio' }, 'hello', [])).rejects.toThrow('fetch failed');
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+      global.fetch = globalFetch;
+    }, 15000);
+
     test('runAgentTurn with gemini provider', async () => {
       const { GoogleGenerativeAI } = require('@google/generative-ai');
       const mockEmbed = {

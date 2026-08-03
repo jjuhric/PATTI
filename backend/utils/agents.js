@@ -51,7 +51,7 @@ const AGENT_PROMPTS = new Proxy({}, {
 });
 
 // Reusable function to execute a single LLM decision turn
-async function runAgentTurn(agentName, systemPrompt, settings, userMessage, history, retriesLeft = 1) {
+async function runAgentTurn(agentName, systemPrompt, settings, userMessage, history, retriesLeft = 2) {
   const {
     provider,
     modelName,
@@ -136,6 +136,10 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
     } catch (fetchErr) {
       if (retriesLeft > 0 && !settings.abortSignal?.aborted) {
         logger.warn(`runAgentTurn fetch exception for agent "${agentName}", retrying (${retriesLeft} attempt(s) left): ${fetchErr.message}`);
+        // A local LLM server (e.g. LM Studio) that hiccups mid-request needs a moment to
+        // recover - an immediate retry just hits the same not-yet-ready server again.
+        // Mirrors llm_text.js's generateText backoff for the same class of transient failure.
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         return runAgentTurn(agentName, systemPrompt, settings, userMessage, history, retriesLeft - 1);
       }
       throw fetchErr;
@@ -156,6 +160,7 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
       const errText = await res.text();
       if (retriesLeft > 0 && !settings.abortSignal?.aborted) {
         logger.warn(`runAgentTurn LLM error for agent "${agentName}", retrying (${retriesLeft} attempt(s) left): ${res.status} - ${errText}`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         return runAgentTurn(agentName, systemPrompt, settings, userMessage, history, retriesLeft - 1);
       }
       throw new Error(`LLM Error: ${res.status} - ${errText}`);
