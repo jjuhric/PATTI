@@ -80,7 +80,7 @@ describe('utils/notifications.js - notifyUser', () => {
       message: 'Your thing is ready.',
       chatId: 42,
       notificationId
-    }));
+    }), userId);
   });
 
   test('stores NULL chat_id when chatId is omitted', async () => {
@@ -167,8 +167,9 @@ describe('GET/POST /api/notifications', () => {
     expect(resAfter.body.unreadCount).toBe(1);
 
     // R2: a content-free sync signal, so a second open tab for this user refreshes its bell
-    // badge immediately instead of waiting for its own next real notification.
-    expect(mockBroadcastAlert).toHaveBeenCalledWith({ type: 'notif_sync' });
+    // badge immediately instead of waiting for its own next real notification. Scoped to
+    // this user's own connections (userId as the 2nd broadcastAlert arg).
+    expect(mockBroadcastAlert).toHaveBeenCalledWith({ type: 'notif_sync' }, userA);
   });
 
   test('POST /:id/read does not broadcast a sync signal when the notification id is not found', async () => {
@@ -197,7 +198,7 @@ describe('GET/POST /api/notifications', () => {
     const resB = await request(app).get('/api/notifications').set('Authorization', `Bearer ${tokenB}`);
     expect(resB.body.unreadCount).toBe(1);
 
-    expect(mockBroadcastAlert).toHaveBeenCalledWith({ type: 'notif_sync' });
+    expect(mockBroadcastAlert).toHaveBeenCalledWith({ type: 'notif_sync' }, userA);
   });
 
   test('database errors return 500', async () => {

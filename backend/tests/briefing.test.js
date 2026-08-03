@@ -141,7 +141,7 @@ describe('Daily Briefing Generation Tests', () => {
       type: 'info',
       message: expect.stringContaining('briefing'),
       notificationId: expect.anything()
-    }));
+    }), 1);
 
     // notifyUser (utils/notifications.js) persists the notification before broadcasting it,
     // so it survives even if no tab was open to catch the live broadcastAlert above.
