@@ -1,201 +1,114 @@
 const { handleEsp32Tool } = require('../tools/esp32_tool');
-const http = require('http');
-jest.mock('http');
 
-describe('ESP32 Tool Tests', () => {
-  const originalFetch = global.fetch;
-  let mockRequest;
-  let mockResponse;
+let mockDb = { get: jest.fn() };
+jest.mock('../db', () => ({
+  getDb: jest.fn(() => Promise.resolve(mockDb))
+}));
 
+jest.mock('../services/mqtt_service', () => ({
+  publishAndAwaitResponse: jest.fn()
+}));
+const mqttService = require('../services/mqtt_service');
+
+describe('ESP32 Tool Tests (MQTT)', () => {
   beforeEach(() => {
-    global.fetch = jest.fn();
-    mockRequest = {
-      on: jest.fn(),
-      write: jest.fn(),
-      end: jest.fn()
-    };
-    mockResponse = {
-      statusCode: 200,
-      on: jest.fn((event, cb) => {
-        if (event === 'data') {
-          cb(JSON.stringify({ success: true }));
-        }
-        if (event === 'end') {
-          cb();
-        }
-      })
-    };
-    http.request = jest.fn((options, callback) => {
-      callback(mockResponse);
-      return mockRequest;
-    });
+    jest.clearAllMocks();
   });
 
-  afterEach(() => {
-    global.fetch = originalFetch;
+  test('returns an error when no IP address is provided and no default is set', async () => {
+    const result = await handleEsp32Tool(null, null, 'send_message', { message: 'hi' });
+    expect(result).toContain('Error: No ESP32 IP address provided');
   });
 
-  test('sends POST request successfully to ESP32 with authorization header', async () => {
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ success: true, pin: 2, value: 1 })
-    });
-
-    const result = await handleEsp32Tool('192.168.1.15', 3000, 'write', { pin: 2, value: 1 }, 'secret-key');
-    
-    expect(global.fetch).toHaveBeenCalledWith('http://192.168.1.15:3000/api/gpio/write', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer secret-key'
-      },
-      body: JSON.stringify({ pin: 2, value: 1 })
-    });
-    expect(JSON.parse(result)).toEqual({ success: true, pin: 2, value: 1 });
+  test('returns a clear error when no node is registered for the given IP', async () => {
+    mockDb.get.mockResolvedValueOnce(null);
+    const result = await handleEsp32Tool('192.168.1.117', null, 'send_message', { message: 'hi' });
+    expect(result).toContain('Error:');
+    expect(result).toContain('No registered node found for IP 192.168.1.117');
+    expect(mqttService.publishAndAwaitResponse).not.toHaveBeenCalled();
   });
 
-  test('sends POST request successfully to ESP32 without authorization header', async () => {
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ success: true, pin: 5, value: 0 })
-    });
-
-    const result = await handleEsp32Tool('192.168.1.15', 3000, 'write', { pin: 5, value: 0 });
-    
-    expect(global.fetch).toHaveBeenCalledWith('http://192.168.1.15:3000/api/gpio/write', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ pin: 5, value: 0 })
-    });
-    expect(JSON.parse(result)).toEqual({ success: true, pin: 5, value: 0 });
+  test('returns a clear error when the registered node has no mqtt_topic configured', async () => {
+    mockDb.get.mockResolvedValueOnce({ id: 1, node_name: 'Kitchen ESP32', device_type: 'esp32-wroom', mqtt_topic: null });
+    const result = await handleEsp32Tool('192.168.1.117', null, 'send_message', { message: 'hi' });
+    expect(result).toContain('Error:');
+    expect(result).toContain('has no MQTT ID configured');
+    expect(mqttService.publishAndAwaitResponse).not.toHaveBeenCalled();
   });
 
-  test('handles bad response status', async () => {
-    global.fetch.mockResolvedValueOnce({
-      ok: false,
-      status: 400
-    });
-
-    const result = await handleEsp32Tool('192.168.1.15', 3000, 'write', { pin: 2, value: 1 });
-    expect(result).toContain('Failed to communicate with ESP32');
-    expect(result).toContain('ESP32 responded with status: 400');
-  });
-
-  test('handles fetch network error throws', async () => {
-    global.fetch.mockRejectedValueOnce(new Error('Network offline'));
-
-    const result = await handleEsp32Tool('192.168.1.15', 3000, 'write', { pin: 2, value: 1 });
-    expect(result).toContain('Failed to communicate with ESP32');
-    expect(result).toContain('Network offline');
-  });
-
-  test('sends message successfully to ESP32 /message endpoint', async () => {
-    const result = await handleEsp32Tool('192.168.1.117', null, 'send_message', { message: 'hello' });
-    
-    expect(http.request).toHaveBeenCalled();
-    const mockCallArgs = http.request.mock.calls[0][0];
-    expect(mockCallArgs.hostname).toBe('192.168.1.117');
-    expect(mockCallArgs.path).toBe('/message');
-    expect(mockCallArgs.method).toBe('POST');
-    expect(mockCallArgs.headers['Content-Type']).toBe('application/json');
-    expect(mockCallArgs.headers['Content-Length']).toBe(Buffer.byteLength(JSON.stringify({ message: 'hello' })));
-    expect(JSON.parse(result)).toEqual({ success: true });
-  });
-
-  test('handles /message endpoint unreachable error', async () => {
-    http.request.mockImplementationOnce((options, callback) => {
-      return {
-        on: jest.fn((event, cb) => {
-          if (event === 'error') {
-            process.nextTick(() => cb(new Error('Connect timeout')));
-          }
-        }),
-        write: jest.fn(),
-        end: jest.fn()
-      };
+  test('sends a send_message command over MQTT, deriving the client ID from a bare mqtt_topic', async () => {
+    mockDb.get.mockResolvedValueOnce({ id: 1, node_name: 'Kitchen ESP32', device_type: 'esp32-wroom', mqtt_topic: 'esp32_aabbcc' });
+    mqttService.publishAndAwaitResponse.mockResolvedValueOnce({
+      status: 'success',
+      data: { success: true, displayed: false }
     });
 
     const result = await handleEsp32Tool('192.168.1.117', null, 'send_message', { message: 'hello' });
+
+    expect(mqttService.publishAndAwaitResponse).toHaveBeenCalledWith('esp32_aabbcc', 'send_message', 8000, { message: 'hello' });
+    expect(JSON.parse(result)).toEqual({ success: true, displayed: false });
+  });
+
+  test('derives the client ID from a full "nodes/<id>/responses"-shaped mqtt_topic', async () => {
+    mockDb.get.mockResolvedValueOnce({ id: 1, node_name: 'Kitchen ESP32', device_type: 'esp32-wroom', mqtt_topic: 'nodes/esp32_aabbcc/responses' });
+    mqttService.publishAndAwaitResponse.mockResolvedValueOnce({ status: 'success', data: { success: true } });
+
+    await handleEsp32Tool('192.168.1.117', null, 'send_message', { message: 'hello' });
+
+    expect(mqttService.publishAndAwaitResponse).toHaveBeenCalledWith('esp32_aabbcc', 'send_message', 8000, { message: 'hello' });
+  });
+
+  test('returns the firmware\'s own "not implemented" error for a command it does not support', async () => {
+    mockDb.get.mockResolvedValueOnce({ id: 1, node_name: 'Kitchen ESP32', device_type: 'esp32-wroom', mqtt_topic: 'esp32_aabbcc' });
+    mqttService.publishAndAwaitResponse.mockResolvedValueOnce({
+      status: 'error',
+      data: { error: "Command 'toggle_screen' is not implemented on this firmware." }
+    });
+
+    const result = await handleEsp32Tool('192.168.1.117', null, 'toggle_screen', {});
+
+    expect(result).toBe("Error: Command 'toggle_screen' is not implemented on this firmware.");
+  });
+
+  test('send_message failure over MQTT returns an "Error:"-prefixed message with details', async () => {
+    mockDb.get.mockResolvedValueOnce({ id: 1, node_name: 'Kitchen ESP32', device_type: 'esp32-wroom', mqtt_topic: 'esp32_aabbcc' });
+    mqttService.publishAndAwaitResponse.mockRejectedValueOnce(new Error('MQTT Request Timeout after 8000ms'));
+
+    const result = await handleEsp32Tool('192.168.1.117', null, 'send_message', { message: 'hello' });
+
     expect(result).toContain('Error: Failed to communicate with ESP32 at 192.168.1.117');
-    expect(result).toContain('Connect timeout');
+    expect(result).toContain('MQTT Request Timeout after 8000ms');
   });
 
-  test('handles /message endpoint too long validation error', async () => {
-    mockResponse.statusCode = 400;
-    mockResponse.on = jest.fn((event, cb) => {
-      if (event === 'data') {
-        cb(JSON.stringify({ ok: false, error: 'message exceeds max length 240 by 10 characters' }));
-      }
-      if (event === 'end') {
-        cb();
-      }
-    });
-
-    const result = await handleEsp32Tool('192.168.1.117', null, 'send_message', { message: 'long...' });
-    expect(result).toContain('Error: Failed to communicate with ESP32 at 192.168.1.117');
-    expect(result).toContain('message exceeds max length 240 by 10 characters');
-  });
-
-  test('toggles screen successfully via raw HTTP POST /screen with the expected body', async () => {
-    // Uses the same raw http.request path as send_message (not fetch) -
-    // minimal embedded HTTP servers like the ESP32's don't reliably parse
-    // fetch()'s request encoding, and need an explicit Content-Length.
-    mockResponse.on = jest.fn((event, cb) => {
-      if (event === 'data') {
-        cb(JSON.stringify({ ok: true, screenOn: true }));
-      }
-      if (event === 'end') {
-        cb();
-      }
-    });
+  test('a non-send_message failure returns a message without the "Error:" prefix, matching the toggle-screen route\'s check', async () => {
+    mockDb.get.mockResolvedValueOnce({ id: 1, node_name: 'Kitchen ESP32', device_type: 'esp32-wroom', mqtt_topic: 'esp32_aabbcc' });
+    mqttService.publishAndAwaitResponse.mockRejectedValueOnce(new Error('MQTT Request Timeout after 8000ms'));
 
     const result = await handleEsp32Tool('192.168.1.117', null, 'toggle_screen', {});
 
-    expect(http.request).toHaveBeenCalled();
-    const mockCallArgs = http.request.mock.calls[0][0];
-    expect(mockCallArgs.hostname).toBe('192.168.1.117');
-    expect(mockCallArgs.path).toBe('/screen');
-    expect(mockCallArgs.method).toBe('POST');
-    expect(mockCallArgs.headers['Content-Type']).toBe('application/json');
-    const expectedBody = JSON.stringify({ action: 'toggle screen' });
-    expect(mockCallArgs.headers['Content-Length']).toBe(Buffer.byteLength(expectedBody));
-    expect(mockRequest.write).toHaveBeenCalledWith(expectedBody);
-    expect(JSON.parse(result)).toEqual({ ok: true, screenOn: true });
+    expect(result.startsWith('Error:')).toBe(false);
+    expect(result).toContain('Failed to communicate with ESP32 at 192.168.1.117');
+    expect(result).toContain('MQTT Request Timeout after 8000ms');
   });
 
-  test('handles /screen endpoint unreachable error', async () => {
-    http.request.mockImplementationOnce((options, callback) => {
-      return {
-        on: jest.fn((event, cb) => {
-          if (event === 'error') {
-            process.nextTick(() => cb(new Error('Network offline')));
-          }
-        }),
-        write: jest.fn(),
-        end: jest.fn()
-      };
-    });
+  test('uses "device" instead of "ESP32" in error messages for a non-ESP32 device_type', async () => {
+    mockDb.get.mockResolvedValueOnce({ id: 2, node_name: 'Living Room Pi', device_type: 'rpi-5-8gb', mqtt_topic: 'node_livingroom' });
+    mqttService.publishAndAwaitResponse.mockRejectedValueOnce(new Error('offline'));
 
-    const result = await handleEsp32Tool('192.168.1.117', null, 'toggle_screen', {});
-    expect(result).toContain('Failed to communicate with ESP32');
-    expect(result).toContain('Network offline');
+    const result = await handleEsp32Tool('192.168.1.150', null, 'toggle_screen', {});
+
+    expect(result).toContain('Failed to communicate with device at 192.168.1.150');
   });
 
-  test('handles /screen endpoint bad response status', async () => {
-    mockResponse.statusCode = 500;
-    mockResponse.on = jest.fn((event, cb) => {
-      if (event === 'data') {
-        cb(JSON.stringify({ error: 'expected JSON body' }));
-      }
-      if (event === 'end') {
-        cb();
-      }
-    });
+  test('falls back to ESP32_DEFAULT_IP when no IP is passed', async () => {
+    const originalEnv = process.env.ESP32_DEFAULT_IP;
+    process.env.ESP32_DEFAULT_IP = '192.168.1.200';
+    mockDb.get.mockResolvedValueOnce({ id: 1, node_name: 'Default ESP32', device_type: 'esp32-wroom', mqtt_topic: 'esp32_default' });
+    mqttService.publishAndAwaitResponse.mockResolvedValueOnce({ status: 'success', data: { success: true } });
 
-    const result = await handleEsp32Tool('192.168.1.117', null, 'toggle_screen', {});
-    expect(result).toContain('Failed to communicate with ESP32');
-    expect(result).toContain('expected JSON body');
+    await handleEsp32Tool(null, null, 'send_message', { message: 'hi' });
+
+    expect(mockDb.get).toHaveBeenCalledWith(expect.any(String), ['192.168.1.200']);
+    process.env.ESP32_DEFAULT_IP = originalEnv;
   });
 });

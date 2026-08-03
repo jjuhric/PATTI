@@ -188,7 +188,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
   // Nodes State
   const [nodes, setNodes] = useState([]);
   const [showAddNode, setShowAddNode] = useState(false);
-  const [newNode, setNewNode] = useState({ node_name: '', device_type: 'rpi-5-8gb', ip_address: '', port: 3000, bridge_secret: '' });
+  const [newNode, setNewNode] = useState({ node_name: '', device_type: 'rpi-5-8gb', ip_address: '', port: 3000, bridge_secret: '', mqtt_topic: '' });
   const [fileContent, setFileContent] = useState('');
   const [fileName, setFileName] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -496,7 +496,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
         body: JSON.stringify(newNode)
       });
       if (res.ok) {
-        setNewNode({ node_name: '', device_type: 'rpi-5-8gb', ip_address: '', port: 3000, bridge_secret: '' });
+        setNewNode({ node_name: '', device_type: 'rpi-5-8gb', ip_address: '', port: 3000, bridge_secret: '', mqtt_topic: '' });
         setShowAddNode(false);
         fetchNodes();
       } else {
@@ -1519,7 +1519,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                         <span style={{ color: 'var(--text-secondary)' }}>Type: {n.device_type}</span>
                         {n.is_main_host && <span style={{ marginLeft: '8px', background: 'var(--accent-primary)', fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', color: '#fff' }}>Main Host</span>}
                       </div>
-                      <button className="btn btn-primary" onClick={() => setRegisteringNode({ node_name: `${n.device_type.toUpperCase()} Node`, device_type: n.device_type, ip_address: n.ip_address, port: n.port, bridge_secret: '' })} style={{ fontSize: '0.75rem', padding: '4px 10px' }}>
+                      <button className="btn btn-primary" onClick={() => setRegisteringNode({ node_name: `${n.device_type.toUpperCase()} Node`, device_type: n.device_type, ip_address: n.ip_address, port: n.port, bridge_secret: '', mqtt_topic: '' })} style={{ fontSize: '0.75rem', padding: '4px 10px' }}>
                         Quick Register
                       </button>
                     </div>
@@ -1553,6 +1553,12 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                   <div className="form-group" style={{ margin: 0 }}>
                     <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Bridge Secret (Optional)</label>
                     <input type="password" className="form-control" placeholder="Optional Auth Token" value={newNode.bridge_secret} onChange={e => setNewNode({...newNode, bridge_secret: e.target.value})} />
+                  </div>
+                  <div className="form-group" style={{ margin: 0, gridColumn: '1 / -1' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      MQTT Topic / Node ID {newNode.device_type === 'esp32-wroom' ? '(required for ESP32 control)' : '(Optional)'}
+                    </label>
+                    <input type="text" className="form-control" placeholder="e.g. esp32_a1b2c3d4e5f6 (printed on the device's serial console at boot)" value={newNode.mqtt_topic} onChange={e => setNewNode({...newNode, mqtt_topic: e.target.value})} />
                   </div>
                 </div>
                 <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-start' }}>Save Node</button>
@@ -1805,6 +1811,19 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                   <option value="esp32-wroom">ESP32 WROOM (WiFi)</option>
                   <option value="windows">Windows / PC</option>
                 </select>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  MQTT Topic / Node ID {registeringNode.device_type === 'esp32-wroom' ? '(required for ESP32 control)' : '(Optional)'}
+                </label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. esp32_a1b2c3d4e5f6 (printed on the device's serial console at boot)"
+                  value={registeringNode.mqtt_topic || ''}
+                  onChange={e => setRegisteringNode({ ...registeringNode, mqtt_topic: e.target.value })}
+                />
               </div>
 
               <div style={{ display: 'flex', gap: '10px', marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px' }}>

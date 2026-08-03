@@ -81,6 +81,57 @@ def read_power():
         pass
     return "Unavailable"
 
+def publish_response(request_id, status, data):
+    response_topic = "nodes/{}/responses".format(node_id)
+    response_payload = json.dumps({
+        "requestId": request_id,
+        "status": status,
+        "data": data
+    })
+    try:
+        mqtt_client.publish(response_topic, response_payload)
+        print("Published response to:", response_topic)
+    except Exception as e:
+        print("Failed to publish MQTT response:", e)
+
+def handle_get_system_info(request_id, payload):
+    wlan = network.WLAN(network.STA_IF)
+    local_ip = wlan.ifconfig()[0] if wlan.isconnected() else "0.0.0.0"
+
+    response_data = {
+        "node_id": node_id,
+        "ip_address": local_ip,
+        "os": "MicroPython " + sys.version,
+        "timezone": "UTC",
+        "timestamp": "{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}Z".format(*time.gmtime()[:6]),
+        "temperature": read_temperature(),
+        "power": read_power()
+    }
+    publish_response(request_id, "success", response_data)
+
+def handle_send_message(request_id, payload):
+    # No display driver exists in this firmware (the ESP32-CYD's TFT panel is never
+    # initialized here), so the honest, always-correct behavior on any board is to log
+    # the message to the serial console rather than silently pretending to render it.
+    message = payload.get("message", "")
+    print("[ESP32 Message]:", message)
+    publish_response(request_id, "success", {
+        "success": True,
+        "displayed": False,
+        "note": "Message logged to serial console. On-screen display requires board-specific driver code not yet implemented."
+    })
+
+def handle_unimplemented(command, request_id, payload):
+    print("Received unimplemented command:", command)
+    publish_response(request_id, "error", {
+        "error": "Command '{}' is not implemented on this firmware.".format(command)
+    })
+
+COMMAND_HANDLERS = {
+    "get_system_info": handle_get_system_info,
+    "send_message": handle_send_message
+}
+
 def mqtt_callback(topic, msg):
     print("Received MQTT message on topic:", topic.decode())
     try:
@@ -89,33 +140,13 @@ def mqtt_callback(topic, msg):
         print("Failed to decode JSON payload.")
         return
 
-    if payload.get("command") == "get_system_info":
-        wlan = network.WLAN(network.STA_IF)
-        local_ip = wlan.ifconfig()[0] if wlan.isconnected() else "0.0.0.0"
-        
-        # Build system info
-        response_data = {
-            "node_id": node_id,
-            "ip_address": local_ip,
-            "os": "MicroPython " + sys.version,
-            "timezone": "UTC",
-            "timestamp": "{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}Z".format(*time.gmtime()[:6]),
-            "temperature": read_temperature(),
-            "power": read_power()
-        }
-
-        response_payload = json.dumps({
-            "requestId": payload.get("requestId"),
-            "status": "success",
-            "data": response_data
-        })
-
-        response_topic = "nodes/{}/responses".format(node_id)
-        try:
-            mqtt_client.publish(response_topic, response_payload)
-            print("Published system info to:", response_topic)
-        except Exception as e:
-            print("Failed to publish MQTT response:", e)
+    command = payload.get("command")
+    request_id = payload.get("requestId")
+    handler = COMMAND_HANDLERS.get(command)
+    if handler:
+        handler(request_id, payload)
+    else:
+        handle_unimplemented(command, request_id, payload)
 
 def main():
     global mqtt_client

@@ -7,7 +7,6 @@ const { authenticateToken } = require('../middleware/auth');
 const { getDb } = require('../db');
 const { encrypt, decrypt } = require('../utils/crypto');
 const {
-  checkTcpPort,
   discoverAndSyncNodes
 } = require('../utils/network_discovery');
 
@@ -106,7 +105,7 @@ router.post('/scan', authenticateToken, async (req, res) => {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const db = await getDb();
-    const nodes = await db.all('SELECT id, node_name, device_type, ip_address, port, last_seen, is_online, created_at, node_role, ssh_username, ssh_password, ssh_key FROM network_nodes WHERE user_id = ?', [req.user.id]);
+    const nodes = await db.all('SELECT id, node_name, device_type, ip_address, port, last_seen, is_online, created_at, node_role, ssh_username, ssh_password, ssh_key, mqtt_topic FROM network_nodes WHERE user_id = ?', [req.user.id]);
     const decryptedNodes = nodes.map(node => ({
       ...node,
       ssh_password: node.ssh_password ? decrypt(node.ssh_password) : '',
@@ -120,8 +119,8 @@ router.get('/', authenticateToken, async (req, res) => {
 
 // Add a new node
 router.post('/', authenticateToken, async (req, res) => {
-  const { node_name, device_type, ip_address, port, bridge_secret, ssh_username, ssh_password, ssh_key } = req.body;
-  
+  const { node_name, device_type, ip_address, port, bridge_secret, ssh_username, ssh_password, ssh_key, mqtt_topic } = req.body;
+
   if (!node_name || !device_type || !ip_address) {
     return res.status(400).json({ error: 'node_name, device_type, and ip_address are required' });
   }
@@ -144,10 +143,10 @@ router.post('/', authenticateToken, async (req, res) => {
     const encKey = ssh_key ? encrypt(ssh_key) : null;
 
     const result = await db.run(
-      'INSERT INTO network_nodes (user_id, node_name, device_type, ip_address, port, bridge_secret, last_seen, is_online, ssh_username, ssh_password, ssh_key) VALUES (?, ?, ?, ?, ?, ?, datetime("now"), 1, ?, ?, ?)',
-      [req.user.id, node_name, device_type, ip_address, targetPort, bridge_secret || null, ssh_username || null, encPassword, encKey]
+      'INSERT INTO network_nodes (user_id, node_name, device_type, ip_address, port, bridge_secret, last_seen, is_online, ssh_username, ssh_password, ssh_key, mqtt_topic) VALUES (?, ?, ?, ?, ?, ?, datetime("now"), 1, ?, ?, ?, ?)',
+      [req.user.id, node_name, device_type, ip_address, targetPort, bridge_secret || null, ssh_username || null, encPassword, encKey, mqtt_topic ? mqtt_topic.trim() : null]
     );
-    
+
     res.json({ id: result.lastID, success: true, message: 'Node added successfully' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -156,18 +155,18 @@ router.post('/', authenticateToken, async (req, res) => {
 
 // Update a node
 router.put('/:id', authenticateToken, async (req, res) => {
-  const { node_name, device_type, ip_address, port, is_online, ssh_username, ssh_password, ssh_key } = req.body;
+  const { node_name, device_type, ip_address, port, is_online, ssh_username, ssh_password, ssh_key, mqtt_topic } = req.body;
   const { id } = req.params;
 
   try {
     const db = await getDb();
-    
+
     const encPassword = ssh_password ? encrypt(ssh_password) : null;
     const encKey = ssh_key ? encrypt(ssh_key) : null;
-    
+
     await db.run(
-      'UPDATE network_nodes SET node_name = ?, device_type = ?, ip_address = ?, port = ?, is_online = ?, ssh_username = ?, ssh_password = ?, ssh_key = ? WHERE id = ? AND user_id = ?',
-      [node_name, device_type, ip_address, port, is_online, ssh_username || null, encPassword, encKey, id, req.user.id]
+      'UPDATE network_nodes SET node_name = ?, device_type = ?, ip_address = ?, port = ?, is_online = ?, ssh_username = ?, ssh_password = ?, ssh_key = ?, mqtt_topic = ? WHERE id = ? AND user_id = ?',
+      [node_name, device_type, ip_address, port, is_online, ssh_username || null, encPassword, encKey, mqtt_topic ? mqtt_topic.trim() : null, id, req.user.id]
     );
     res.json({ success: true, message: 'Node updated successfully' });
   } catch (err) {
@@ -199,65 +198,30 @@ router.post('/:id/ping', authenticateToken, async (req, res) => {
   }
 });
 
-// Check health of all registered nodes from the backend (avoiding CORS and JWT issues)
+// Check health of all registered nodes from the backend (avoiding CORS and JWT issues).
+// Reuses node_health_service's checkNodeHealth so this endpoint and the background daemon
+// never drift apart on what "healthy" means for a given device type (they used to - this
+// duplicate copy was still checking for the wrong ESP32 device_type spelling).
 router.get('/health-check', authenticateToken, async (req, res) => {
   try {
     const db = await getDb();
-    const nodes = await db.all('SELECT id, ip_address, port, device_type FROM network_nodes WHERE user_id = ?', [req.user.id]);
-    
+    const { checkNodeHealth } = require('../services/node_health_service');
+    const nodes = await db.all('SELECT id, ip_address, port, device_type, mqtt_topic FROM network_nodes WHERE user_id = ?', [req.user.id]);
+
     const results = {};
     await Promise.all(
       nodes.map(async (node) => {
-        let isOnline = false;
-        
-        // 1. Try health endpoint check
-        try {
-          const controller = new AbortController();
-          const tId = setTimeout(() => controller.abort(), 600);
-          const targetUrl = `http://${node.ip_address}:${node.port}/health`;
-          const fetchRes = await fetch(targetUrl, { signal: controller.signal });
-          clearTimeout(tId);
-          if (fetchRes.ok) {
-            const data = await fetchRes.json();
-            if (data.ok === true || data.status === 'online') {
-              isOnline = true;
-            }
-          }
-        } catch (e) {
-          // ignore
-        }
-        
-        // 2. Fallback to /api/bridge/health for older configurations or setups
-        if (!isOnline && node.device_type !== 'ESP32' && node.device_type !== 'Google Assistant') {
-          try {
-            const controller = new AbortController();
-            const tId = setTimeout(() => controller.abort(), 600);
-            const targetUrl = `http://${node.ip_address}:${node.port}/api/bridge/health`;
-            const fetchRes = await fetch(targetUrl, { signal: controller.signal });
-            clearTimeout(tId);
-            if (fetchRes.ok) {
-              isOnline = true;
-            }
-          } catch (e) {
-            // ignore
-          }
-        }
-        
-        // 3. Fallback to raw TCP port check
-        if (!isOnline) {
-          isOnline = await checkTcpPort(node.ip_address, node.port, 400);
-        }
-        
+        const isOnline = await checkNodeHealth(node);
         const isOnlineVal = isOnline ? 1 : 0;
         await db.run(
           'UPDATE network_nodes SET is_online = ?, last_seen = CASE WHEN ? = 1 THEN datetime("now") ELSE last_seen END WHERE id = ?',
           [isOnlineVal, isOnlineVal, node.id]
         );
-        
+
         results[node.id] = { status: isOnline ? 'online' : 'offline' };
       })
     );
-    
+
     res.json(results);
   } catch (err) {
     res.status(500).json({ error: err.message });
