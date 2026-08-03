@@ -1,10 +1,13 @@
 /* Theme tokens. Dark is the long-standing default (unconditional :root) so
    every existing user's appearance is unchanged; light is opt-in, either via
    the toggle in the sidebar (sets [data-theme]) or an OS light preference
-   when no explicit choice has been made yet. --bg-card/--text-main/--text-muted
-   /--error were already referenced by Toast and the starter chips but were
-   never actually declared anywhere (silently falling back to browser
-   defaults) - defined properly here for both themes. */
+   when no explicit choice has been made yet. --bg-card/--error were already
+   referenced by Toast and the starter chips but were never actually declared
+   anywhere (silently falling back to browser defaults) - defined properly
+   here for both themes. (--text-main/--text-muted used to be declared here
+   too, as plain duplicate aliases of --text-primary/--text-secondary with
+   identical values in all four theme blocks - consolidated away, every
+   consumer now uses the canonical --text-primary/--text-secondary names.) */
 :root {
   --bg-primary: #0b0f19;
   --bg-secondary: rgba(17, 24, 39, 0.7);
@@ -12,9 +15,7 @@
   --bg-card: rgba(17, 24, 39, 0.85);
   --border-glass: rgba(255, 255, 255, 0.08);
   --text-primary: #f3f4f6;
-  --text-main: #f3f4f6;
   --text-secondary: #9ca3af;
-  --text-muted: #9ca3af;
   --accent-primary: #8b5cf6;
   --accent-secondary: #06b6d4;
   --accent-green: #10b981;
@@ -31,9 +32,7 @@
     --bg-card: rgba(255, 255, 255, 0.94);
     --border-glass: rgba(15, 23, 42, 0.09);
     --text-primary: #1a1a2e;
-    --text-main: #1a1a2e;
     --text-secondary: #5c5f70;
-    --text-muted: #5c5f70;
     --accent-primary: #7c3aed;
     --accent-secondary: #0891b2;
     --accent-green: #059669;
@@ -49,9 +48,7 @@
   --bg-card: rgba(17, 24, 39, 0.85);
   --border-glass: rgba(255, 255, 255, 0.08);
   --text-primary: #f3f4f6;
-  --text-main: #f3f4f6;
   --text-secondary: #9ca3af;
-  --text-muted: #9ca3af;
   --accent-primary: #8b5cf6;
   --accent-secondary: #06b6d4;
   --accent-green: #10b981;
@@ -66,9 +63,7 @@
   --bg-card: rgba(255, 255, 255, 0.94);
   --border-glass: rgba(15, 23, 42, 0.09);
   --text-primary: #1a1a2e;
-  --text-main: #1a1a2e;
   --text-secondary: #5c5f70;
-  --text-muted: #5c5f70;
   --accent-primary: #7c3aed;
   --accent-secondary: #0891b2;
   --accent-green: #059669;
@@ -455,19 +450,27 @@ select.form-control option {
   font-size: 0.9rem;
 }
 
-.btn-icon {
+.btn-icon,
+.btn-ghost {
   background: transparent;
   border: none;
-  color: var(--text-secondary);
   cursor: pointer;
-  transition: var(--transition-smooth);
   padding: 6px;
+  transition: var(--transition-smooth);
+}
+
+.btn-icon:hover,
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.btn-icon {
+  color: var(--text-secondary);
   border-radius: 6px;
 }
 
 .btn-icon:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.05);
 }
 
 /* Main Dashboard Panel */
@@ -986,15 +989,19 @@ select.form-control option {
   font-weight: 600;
 }
 
-.settings-tab-btn {
+.settings-tab-btn,
+.academy-tab-btn {
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-secondary);
-  padding: 8px 16px;
   cursor: pointer;
-  font-size: 0.95rem;
   transition: var(--transition-smooth);
+}
+
+.settings-tab-btn {
+  padding: 8px 16px;
+  font-size: 0.95rem;
 }
 
 .settings-tab-btn.active {
@@ -1180,7 +1187,7 @@ select.form-control option {
   backdrop-filter: blur(16px);
   border: 1px solid var(--border-glass);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-  color: var(--text-main);
+  color: var(--text-primary);
   animation: toastSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -1210,7 +1217,7 @@ select.form-control option {
 .toast-close-btn {
   background: transparent;
   border: none;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   padding: 4px;
   display: flex;
@@ -1222,7 +1229,7 @@ select.form-control option {
 
 .toast-close-btn:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: var(--text-main);
+  color: var(--text-primary);
 }
 
 /* Starter Suggestion Chips */
@@ -1246,7 +1253,7 @@ select.form-control option {
 }
 
 .starter-subtitle {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 0.95rem;
   margin-bottom: 24px;
   max-width: 480px;
@@ -1268,7 +1275,7 @@ select.form-control option {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--border-glass);
-  color: var(--text-main);
+  color: var(--text-primary);
   font-size: 0.88rem;
   font-weight: 500;
   cursor: pointer;
@@ -1781,19 +1788,16 @@ select.form-control option {
   margin-bottom: 20px;
 }
 
+/* .academy-tab-btn's shared background/border/border-bottom/color/cursor/transition live
+   in the combined .settings-tab-btn, .academy-tab-btn rule above - only its differences
+   are declared here. */
 .academy-tab-btn {
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-secondary);
   padding: 10px 16px;
-  cursor: pointer;
   font-size: 0.9rem;
   font-weight: 550;
   display: flex;
   align-items: center;
   gap: 8px;
-  transition: var(--transition-smooth);
 }
 
 .academy-tab-btn:hover {
@@ -1869,19 +1873,14 @@ select.form-control option {
 .text-error {
   color: #ef4444;
 }
+/* .btn-ghost's shared background/border/cursor/padding/transition/hover live in the
+   combined .btn-icon, .btn-ghost rule near the top of this file - only its differences
+   (icon centering, wider corner radius) are declared here. */
 .btn-ghost {
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 6px;
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: var(--transition-smooth);
-}
-.btn-ghost:hover {
-  background: rgba(255, 255, 255, 0.05);
 }
 
 
