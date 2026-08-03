@@ -31,6 +31,10 @@ jest.mock('../tools/esp32_tool', () => ({
   handleEsp32Tool: jest.fn()
 }));
 
+jest.mock('../services/node_health_service', () => ({
+  checkNodeHealth: jest.fn()
+}));
+
 jest.mock('bcryptjs', () => ({
   compare: jest.fn()
 }));
@@ -74,6 +78,20 @@ describe('Nodes API', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.id).toBe(2);
+  });
+
+  test('POST /api/nodes stores mqtt_topic when provided', async () => {
+    mockDb.run.mockResolvedValueOnce({ lastID: 3 });
+    const res = await request(app).post('/api/nodes').send({
+      node_name: 'ESP32 Sensor',
+      device_type: 'esp32-wroom',
+      ip_address: '192.168.1.100',
+      port: 80,
+      mqtt_topic: ' esp32_a1b2c3d4e5f6 '
+    });
+    expect(res.status).toBe(200);
+    const insertCall = mockDb.run.mock.calls[0];
+    expect(insertCall[1]).toContain('esp32_a1b2c3d4e5f6');
   });
 
   test('POST /api/nodes validation fails if parameters missing', async () => {
@@ -205,6 +223,33 @@ describe('Nodes API', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.nodes.length).toBe(1);
     expect(discoverAndSyncNodes).toHaveBeenCalledWith(mockDb, 1);
+  });
+
+  describe('GET /api/nodes/health-check', () => {
+    const { checkNodeHealth } = require('../services/node_health_service');
+
+    test('delegates to the shared checkNodeHealth helper and updates is_online per node', async () => {
+      mockDb.all.mockResolvedValueOnce([
+        { id: 1, ip_address: '192.168.1.10', port: 3000, device_type: 'rpi-5-8gb', mqtt_topic: null },
+        { id: 2, ip_address: '192.168.1.11', port: 80, device_type: 'esp32-wroom', mqtt_topic: 'esp32_aabbcc' }
+      ]);
+      checkNodeHealth.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      mockDb.run.mockResolvedValue();
+
+      const res = await request(app).get('/api/nodes/health-check');
+
+      expect(res.status).toBe(200);
+      expect(res.body[1].status).toBe('online');
+      expect(res.body[2].status).toBe('offline');
+      expect(checkNodeHealth).toHaveBeenCalledTimes(2);
+    });
+
+    test('handles database error', async () => {
+      mockDb.all.mockRejectedValueOnce(new Error('DB read error'));
+      const res = await request(app).get('/api/nodes/health-check');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('DB read error');
+    });
   });
 
   describe('POST /api/nodes/toggle-screen', () => {

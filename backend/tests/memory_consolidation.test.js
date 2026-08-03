@@ -15,6 +15,7 @@ jest.mock('../utils/embeddings', () => {
   };
 });
 
+const { getEmbedding } = require('../utils/embeddings');
 const { generateText, buildSettingsForUser } = require('../utils/llm_text');
 jest.mock('../utils/llm_text', () => ({
   generateText: jest.fn(),
@@ -160,6 +161,23 @@ describe('utils/memory_consolidation.js', () => {
       expect(generateText).not.toHaveBeenCalled();
       const rows = await db.all('SELECT * FROM memories WHERE user_id = ?', [userId]);
       expect(rows.length).toBe(2);
+    });
+
+    test('merge decision: if generating the merged embedding fails, neither row is deleted (BUG-1 regression)', async () => {
+      const idA = await insertMemory({ content: 'Owns a golden retriever' });
+      const idB = await insertMemory({ content: 'Owns a golden retriever' });
+
+      generateText.mockResolvedValueOnce('{"action":"merge","mergedContent":"Owns a golden retriever named Max"}');
+      getEmbedding.mockRejectedValueOnce(new Error('Embedding service unavailable'));
+
+      await expect(consolidateUserMemories(db, userId)).resolves.not.toThrow();
+
+      // The whole cluster must be left untouched - the old code deleted losers first,
+      // so a failure here used to leave them permanently gone with the merge never applied.
+      const rows = await db.all('SELECT id, content FROM memories WHERE user_id = ? ORDER BY id', [userId]);
+      expect(rows.map(r => r.id)).toEqual([idA, idB]);
+      expect(rows[0].content).toBe('Owns a golden retriever');
+      expect(mockDeleteMemory).not.toHaveBeenCalled();
     });
 
     test('supersede decision: keeps the memory at keepIndex, discards the other', async () => {

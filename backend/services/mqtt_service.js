@@ -220,10 +220,10 @@ class MqttService {
     this.publish(topic, payload, { retain: true });
   }
 
-  async publishAndAwaitResponse(nodeId, command, timeoutMs = 8000) {
+  async publishAndAwaitResponse(nodeId, command, timeoutMs = 8000, extraPayload = {}) {
     const crypto = require('crypto');
     const requestId = crypto.randomUUID();
-    
+
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         if (this.pendingRequests.has(requestId)) {
@@ -236,6 +236,7 @@ class MqttService {
 
       const topic = `nodes/${nodeId}/commands`;
       const payload = {
+        ...extraPayload,
         command,
         requestId
       };

@@ -1,161 +1,75 @@
-// Use global fetch
+const mqttService = require('../services/mqtt_service');
 
-// Minimal embedded HTTP servers (like the ESP32's) don't reliably handle
-// fetch()'s request encoding - it can omit an explicit Content-Length in
-// favor of chunked transfer, which these devices don't parse, leaving them
-// seeing an empty/malformed body ("expected JSON body") even though a valid
-// JSON payload was sent. Node's raw http module with an explicit
-// Content-Length header avoids that.
-function postJsonRaw(ip, port, path, bodyPayload, extraHeaders = {}) {
-  const http = require('http');
-  return new Promise((resolve, reject) => {
-    let targetIp = ip;
-    let targetPort = port;
-    if (ip.includes(':')) {
-      const parts = ip.split(':');
-      targetIp = parts[0];
-      targetPort = parseInt(parts[1], 10);
-    }
+// ESP32 boards in this fleet (esp32_firmware/main.py) are MicroPython, MQTT-only - they
+// never start an HTTP server, so control commands route over the same MQTT request/response
+// channel already proven for get_system_info (see remote_node_tool.js / mqtt_service.js's
+// publishAndAwaitResponse). "Not implemented" for a given command is decided by the firmware
+// itself (single source of truth), not duplicated as a whitelist here.
+const REQUEST_TIMEOUT_MS = 8000;
 
-    const options = {
-      hostname: targetIp,
-      port: targetPort,
-      path,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(bodyPayload),
-        ...extraHeaders
-      }
-    };
+// Derives the MQTT client/node ID from a network_nodes row the same way remote_node_tool.js
+// does: mqtt_topic may be stored as a bare ID or a full "nodes/<id>/responses"-shaped topic.
+function deriveMqttId(node) {
+  let mqttId = node.mqtt_topic || '';
+  return mqttId.replace(/^nodes\//, '').replace(/\/.*$/, '');
+}
 
-    const req = http.request(options, (httpRes) => {
-      let responseBody = '';
-      httpRes.on('data', (chunk) => {
-        responseBody += chunk;
-      });
-      httpRes.on('end', () => {
-        resolve({
-          ok: httpRes.statusCode >= 200 && httpRes.statusCode < 300,
-          status: httpRes.statusCode,
-          body: responseBody
-        });
-      });
-    });
-
-    req.on('error', (err) => {
-      reject(err);
-    });
-
-    req.write(bodyPayload);
-    req.end();
-  });
+async function resolveNode(ip) {
+  const { getDb } = require('../db');
+  const db = await getDb();
+  const node = await db.get(
+    'SELECT id, node_name, device_type, mqtt_topic FROM network_nodes WHERE ip_address = ?',
+    [ip]
+  );
+  if (!node) {
+    return { error: `No registered node found for IP ${ip}. Add it under Field Nodes first.` };
+  }
+  const mqttId = deriveMqttId(node);
+  if (!mqttId) {
+    return { error: `Node "${node.node_name}" at ${ip} has no MQTT ID configured. Set its MQTT Topic to the ID the board prints on its serial console at boot (e.g. "esp32_a1b2c3d4e5f6") under Field Nodes.` };
+  }
+  return { node, mqttId };
 }
 
 /**
- * Sends a command to an ESP32 node via HTTP.
- * This can be used for GPIO writes or reads.
+ * Sends a command to an ESP32 node over MQTT (publish + await correlated response on
+ * nodes/<id>/responses), matching the protocol the firmware actually implements.
  */
-async function handleEsp32Tool(nodeIp, nodePort, action, params = {}, bridgeSecret) {
+async function handleEsp32Tool(nodeIp, nodePort, action, params = {}) {
   const ip = nodeIp || process.env.ESP32_DEFAULT_IP || null;
   if (!ip) {
     return 'Error: No ESP32 IP address provided. Pass an IP address or set the ESP32_DEFAULT_IP environment variable.';
   }
-  let portVal = nodePort;
-  let devType = '';
 
+  let node;
+  let mqttId;
   try {
-    const { getDb } = require('../db');
-    const db = await getDb();
-    const nodeRecord = await db.get('SELECT port, device_type FROM network_nodes WHERE ip_address = ?', [ip]);
-    if (nodeRecord) {
-      devType = nodeRecord.device_type ? nodeRecord.device_type.toLowerCase() : '';
-      if (!portVal) {
-        if (devType.includes('rpi') || devType.includes('windows') || devType.includes('linux')) {
-          portVal = 3000;
-        } else {
-          portVal = nodeRecord.port;
-        }
-      }
+    const resolved = await resolveNode(ip);
+    if (resolved.error) {
+      return `Error: ${resolved.error}`;
     }
-  } catch (e) {
-    // ignore and fallback
-  }
-
-  if (!portVal) {
-    portVal = (action === 'send_message' || action === 'toggle_screen') ? 80 : 3000;
-  }
-
-  try {
-    let url;
-    let bodyData;
-
-    const headers = {};
-    if (bridgeSecret) {
-      headers['Authorization'] = `Bearer ${bridgeSecret}`;
-    }
-
-    let bodyPayload;
-    let devicePath;
-    if (action === 'send_message') {
-      devicePath = '/message';
-      url = `http://${ip}:${portVal}${devicePath}`;
-      headers['Content-Type'] = 'application/json';
-      bodyPayload = JSON.stringify({ message: params.message });
-    } else if (action === 'toggle_screen') {
-      devicePath = '/screen';
-      url = `http://${ip}:${portVal}${devicePath}`;
-      headers['Content-Type'] = 'application/json';
-      bodyPayload = JSON.stringify({ action: 'toggle screen' });
-    } else {
-      url = `http://${ip}:${portVal}/api/gpio/${action}`;
-      headers['Content-Type'] = 'application/json';
-      bodyPayload = JSON.stringify(params);
-    }
-
-    let data;
-    if (action === 'send_message' || action === 'toggle_screen') {
-      const res = await postJsonRaw(ip, portVal, devicePath, bodyPayload, headers);
-
-      try {
-        data = JSON.parse(res.body);
-      } catch (e) {
-        // Response was not JSON
-      }
-
-      if (!res.ok) {
-        if (data && data.error) {
-          throw new Error(data.error);
-        }
-        throw new Error(`ESP32 responded with status: ${res.status}`);
-      }
-    } else {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: bodyPayload
-      });
-
-      try {
-        data = await res.json();
-      } catch (e) {
-        // Response was not JSON
-      }
-
-      if (!res.ok) {
-        if (data && data.error) {
-          throw new Error(data.error);
-        }
-        throw new Error(`ESP32 responded with status: ${res.status}`);
-      }
-    }
-
-    return JSON.stringify(data || { success: true });
+    node = resolved.node;
+    mqttId = resolved.mqttId;
   } catch (err) {
-    const isEsp32 = !devType || devType.includes('esp32');
-    const deviceName = isEsp32 ? 'ESP32' : 'device';
+    return `Error: Failed to look up registered node for ${ip}: ${err.message}`;
+  }
+
+  const devType = (node.device_type || '').toLowerCase();
+  const isEsp32 = !devType || devType.includes('esp32');
+  const deviceName = isEsp32 ? 'ESP32' : 'device';
+
+  try {
+    const result = await mqttService.publishAndAwaitResponse(mqttId, action, REQUEST_TIMEOUT_MS, params);
+
+    if (result && result.status === 'error') {
+      const detail = result.data && result.data.error ? result.data.error : 'ESP32 reported an error.';
+      return `Error: ${detail}`;
+    }
+
+    return JSON.stringify((result && result.data) || { success: true });
+  } catch (err) {
     if (action === 'send_message') {
-      return `Error: Failed to communicate with ${deviceName} at ${ip}. The /message endpoint is unreachable. Please verify if the device is online and try again with the updated/corrected IP address. (Details: ${err.message})`;
+      return `Error: Failed to communicate with ${deviceName} at ${ip}. The device did not respond over MQTT. Please verify if the device is online and try again with the updated/corrected IP address. (Details: ${err.message})`;
     }
     return `Failed to communicate with ${deviceName} at ${ip}: ${err.message}`;
   }

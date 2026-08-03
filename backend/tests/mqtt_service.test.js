@@ -39,6 +39,13 @@ describe('MQTT Service Tests', () => {
   });
 
   afterEach(() => {
+    // Cancel any real setTimeout left behind by an unresolved publishAndAwaitResponse
+    // call (e.g. a test that only asserts what was published, not the response) - an
+    // uncleared 8s timer otherwise keeps the process alive past the test run.
+    for (const { timeout } of mqttService.pendingRequests.values()) {
+      clearTimeout(timeout);
+    }
+    mqttService.pendingRequests.clear();
     mqttService.disconnect();
   });
 
@@ -109,6 +116,38 @@ describe('MQTT Service Tests', () => {
     const result = mqttService.publish('test/publish', 'hello');
     expect(result).toBe(false);
     expect(mockClient.publish).not.toHaveBeenCalled();
+  });
+
+  test('publishAndAwaitResponse merges extraPayload fields alongside command and requestId', () => {
+    mqttService.init();
+    mqttService.connected = true;
+
+    // Never resolved/rejected in this test (no response is simulated) - swallow the
+    // eventual 8s timeout rejection so it doesn't surface as an unhandled rejection
+    // after the test (and suite) has already finished.
+    mqttService.publishAndAwaitResponse('esp32_aabbcc', 'send_message', 8000, { message: 'hello' }).catch(() => {});
+
+    expect(mockClient.publish).toHaveBeenCalledWith(
+      'nodes/esp32_aabbcc/commands',
+      expect.stringContaining('"message":"hello"'),
+      expect.any(Object),
+      expect.any(Function)
+    );
+    const publishedPayload = JSON.parse(mockClient.publish.mock.calls[0][1]);
+    expect(publishedPayload.command).toBe('send_message');
+    expect(publishedPayload.message).toBe('hello');
+    expect(typeof publishedPayload.requestId).toBe('string');
+  });
+
+  test('publishAndAwaitResponse still works with no extraPayload (backward compatible)', () => {
+    mqttService.init();
+    mqttService.connected = true;
+
+    mqttService.publishAndAwaitResponse('node_livingroom', 'get_system_info', 8000).catch(() => {});
+
+    const publishedPayload = JSON.parse(mockClient.publish.mock.calls[0][1]);
+    expect(publishedPayload.command).toBe('get_system_info');
+    expect(publishedPayload.message).toBeUndefined();
   });
 
   test('topicMatches helper patterns', () => {

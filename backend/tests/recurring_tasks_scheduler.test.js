@@ -198,6 +198,28 @@ describe('utils/recurring_tasks_scheduler.js', () => {
       expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
     });
 
+    test('a malformed days_of_week on one task does not abort processing of other candidates in the same tick (BUG-2 regression)', async () => {
+      jest.setSystemTime(new Date('2026-08-04T13:00:00Z')); // Tuesday, 08:00 America/Chicago
+      const malformedTask = { ...baseTask, id: 1, user_id: 1, days_of_week: null }; // .split() throws TypeError
+      const healthyTask = { ...baseTask, id: 2, user_id: 2 };
+
+      mockDb.all.mockImplementation(async (query) => {
+        if (query.includes('FROM recurring_tasks')) return [malformedTask, healthyTask];
+        return [];
+      });
+
+      startRecurringTaskScheduler(mockDb);
+      await jest.advanceTimersByTimeAsync(300000);
+
+      // The healthy task after the malformed one must still run - previously, the
+      // eligibility check (including .split) sat outside the per-task try/catch, so
+      // this TypeError propagated to the outer catch and abandoned every remaining
+      // candidate in the tick, not just the malformed one.
+      expect(buildSettingsForUser).toHaveBeenCalledTimes(1);
+      expect(buildSettingsForUser).toHaveBeenCalledWith(mockDb, 2);
+      expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+    });
+
     test('handles scheduler database check error without throwing', async () => {
       mockDb.all.mockRejectedValueOnce(new Error('Scheduler checking failed'));
 

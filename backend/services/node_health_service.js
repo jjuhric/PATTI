@@ -36,9 +36,30 @@ function checkIpPort(ip, port, timeout = 600) {
   });
 }
 
+// ESP32 boards (esp32_firmware/main.py) are MQTT-only - they never listen on any TCP
+// port, so HTTP/TCP probing (below) can never succeed for one. The only real signal of
+// life is a round trip over the same MQTT request/response channel esp32_tool.js and
+// remote_node_tool.js already use.
+async function checkEsp32Health(node) {
+  let mqttId = (node.mqtt_topic || '').replace(/^nodes\//, '').replace(/\/.*$/, '');
+  if (!mqttId) return false;
+  try {
+    const mqttService = require('./mqtt_service');
+    const result = await mqttService.publishAndAwaitResponse(mqttId, 'get_system_info', 4000);
+    return !!(result && result.status === 'success');
+  } catch (e) {
+    return false;
+  }
+}
+
 async function checkNodeHealth(node) {
+  const deviceType = (node.device_type || '').toLowerCase();
+  if (deviceType.includes('esp32')) {
+    return checkEsp32Health(node);
+  }
+
   let isOnline = false;
-  
+
   // 1. Try health endpoint check
   try {
     const controller = new AbortController();
@@ -55,9 +76,9 @@ async function checkNodeHealth(node) {
   } catch (e) {
     // ignore
   }
-  
+
   // 2. Fallback to /api/bridge/health for older configurations or setups
-  if (!isOnline && node.device_type !== 'ESP32' && node.device_type !== 'Google Assistant') {
+  if (!isOnline && deviceType !== 'google assistant') {
     try {
       const controller = new AbortController();
       const tId = setTimeout(() => controller.abort(), 600);
@@ -71,12 +92,12 @@ async function checkNodeHealth(node) {
       // ignore
     }
   }
-  
+
   // 3. Fallback to raw TCP port check
   if (!isOnline) {
     isOnline = await checkIpPort(node.ip_address, node.port, 400);
   }
-  
+
   return isOnline;
 }
 
@@ -86,7 +107,7 @@ async function runHealthCheck() {
   
   try {
     const db = await getDb();
-    const nodes = await db.all('SELECT id, node_name, ip_address, port, device_type, is_online FROM network_nodes');
+    const nodes = await db.all('SELECT id, node_name, ip_address, port, device_type, is_online, mqtt_topic FROM network_nodes');
     
     await Promise.all(
       nodes.map(async (node) => {
@@ -138,5 +159,6 @@ function stopDaemon() {
 
 module.exports = {
   startDaemon,
-  stopDaemon
+  stopDaemon,
+  checkNodeHealth
 };

@@ -659,10 +659,24 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
           if (toolRow) {
             const manifest = JSON.parse(toolRow.manifest);
             const exportedFnName = manifest.exported_function;
+            // Bust the require cache before loading - without this, a tool that gets
+            // uninstalled and reinstalled with updated code (tool_manager's own live
+            // install_tool/uninstall_tool actions) keeps silently running its old code
+            // until the whole server process restarts, since Node caches modules by
+            // resolved path for the life of the process.
+            try {
+              delete require.cache[require.resolve(dynamicToolPath)];
+            } catch (resolveErr) {
+              // fall through - require() below will surface any real problem
+            }
             const toolModule = require(dynamicToolPath);
             const handlerFn = toolModule[exportedFnName];
             if (typeof handlerFn === 'function') {
-              output = await handlerFn(decision.action, decision.params);
+              // The documented handler signature (PATTI.wiki/Contributing.md) is
+              // (action, params, options) - this third argument was never actually
+              // passed here, so any custom tool written against the documented example
+              // silently got `undefined` for options instead of real request context.
+              output = await handlerFn(decision.action, decision.params, { db, userId, chatId });
             } else {
               output = `Error: Exported function "${exportedFnName}" not found in dynamic tool module "${decision.tool}".`;
             }
