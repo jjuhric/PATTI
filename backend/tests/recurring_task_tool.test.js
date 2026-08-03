@@ -168,6 +168,33 @@ describe('handleRecurringTaskTool', () => {
       const output = await handleRecurringTaskTool(db, userId, 'pause', {});
       expect(JSON.parse(output).error).toMatch(/taskId is required/);
     });
+
+    test('resume enforces the active-task cap - pause + create-more + resume cannot exceed the limit (BUG-3 regression)', async () => {
+      const capUser = await db.run("INSERT INTO users (username, password_hash) VALUES ('resumecapuser', 'hashed')");
+      const capUserId = capUser.lastID;
+
+      const taskIds = [];
+      for (let i = 0; i < MAX_ACTIVE_TASKS_PER_USER; i++) {
+        const res = JSON.parse(await handleRecurringTaskTool(db, capUserId, 'create', { prompt: `task ${i}`, days_of_week: 'daily', hour: 7 }));
+        expect(res.success).toBe(true);
+        taskIds.push(res.taskId);
+      }
+
+      // Pause one to free a slot, then create a replacement - back at the cap, but
+      // now with one inactive task sitting alongside MAX_ACTIVE_TASKS_PER_USER active ones.
+      const pauseOut = JSON.parse(await handleRecurringTaskTool(db, capUserId, 'pause', { taskId: taskIds[0] }));
+      expect(pauseOut.success).toBe(true);
+      const extra = JSON.parse(await handleRecurringTaskTool(db, capUserId, 'create', { prompt: 'extra task', days_of_week: 'daily', hour: 7 }));
+      expect(extra.success).toBe(true);
+
+      // Resuming the paused task would push active count past the cap - must be rejected,
+      // just like 'create' would be. Previously only 'create' checked the cap.
+      const resumeOut = await handleRecurringTaskTool(db, capUserId, 'resume', { taskId: taskIds[0] });
+      expect(JSON.parse(resumeOut).error).toMatch(/active recurring tasks/);
+
+      const row = await db.get('SELECT is_active FROM recurring_tasks WHERE id = ?', [taskIds[0]]);
+      expect(row.is_active).toBe(0);
+    });
   });
 
   describe('delete', () => {

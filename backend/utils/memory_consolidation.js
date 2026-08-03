@@ -116,15 +116,11 @@ async function applyMergeDecision(db, userSettings, cluster, decision) {
 
   const { recallCount, lastRecalledAt } = carryForwardRecallStats(cluster);
 
-  for (const loser of losers) {
-    await db.run('DELETE FROM memories WHERE id = ?', [loser.id]);
-    try {
-      await deleteMemory(loser.content);
-    } catch (err) {
-      logger.warn(`[Memory Consolidation] Failed to remove loser memory ${loser.id} from LanceDB:`, err.message);
-    }
-  }
-
+  // Update the survivor FIRST, before touching the losers - if generating the merged
+  // embedding fails partway through, this throws here and the per-cluster catch in
+  // mergeDuplicateMemories skips the whole cluster, leaving every row untouched. Deleting
+  // the losers first (the old order) meant a failure here could leave them permanently
+  // gone with the survivor never having received the merge - real, silent data loss.
   if (mergedContent && mergedContent !== survivor.content) {
     const newEmbedding = await getEmbedding(mergedContent, userSettings);
     await db.run(
@@ -147,6 +143,15 @@ async function applyMergeDecision(db, userSettings, cluster, decision) {
       'UPDATE memories SET recall_count = ?, last_recalled_at = ? WHERE id = ?',
       [recallCount, lastRecalledAt, survivor.id]
     );
+  }
+
+  for (const loser of losers) {
+    await db.run('DELETE FROM memories WHERE id = ?', [loser.id]);
+    try {
+      await deleteMemory(loser.content);
+    } catch (err) {
+      logger.warn(`[Memory Consolidation] Failed to remove loser memory ${loser.id} from LanceDB:`, err.message);
+    }
   }
 }
 

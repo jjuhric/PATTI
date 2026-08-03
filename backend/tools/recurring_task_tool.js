@@ -90,6 +90,19 @@ async function handleRecurringTaskTool(db, userId, action, params = {}) {
   if (action === 'pause' || action === 'resume') {
     const { taskId } = params;
     if (!taskId) return JSON.stringify({ error: 'taskId is required' });
+
+    if (action === 'resume') {
+      // Same cap check as 'create' - without it, pause + create-more + resume can push
+      // a user past MAX_ACTIVE_TASKS_PER_USER, since only 'create' enforced the ceiling.
+      const activeCount = await db.get(
+        'SELECT COUNT(*) as count FROM recurring_tasks WHERE user_id = ? AND is_active = 1',
+        [userId]
+      );
+      if (activeCount.count >= MAX_ACTIVE_TASKS_PER_USER) {
+        return JSON.stringify({ error: `You already have ${MAX_ACTIVE_TASKS_PER_USER} active recurring tasks, which is the limit. Pause or delete one before resuming another.` });
+      }
+    }
+
     const result = await db.run(
       'UPDATE recurring_tasks SET is_active = ? WHERE id = ? AND user_id = ?',
       [action === 'resume' ? 1 : 0, taskId, userId]

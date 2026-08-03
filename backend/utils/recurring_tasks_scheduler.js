@@ -92,17 +92,22 @@ function startRecurringTaskScheduler(db) {
       );
 
       for (const task of candidates) {
-        const tz = task.timezone || 'America/Chicago';
-        const { hour, dateStr, weekday } = getUserLocalNow(tz);
-        const lastLocalDate = task.last_run_at
-          ? getUserLocalNow(tz, new Date(task.last_run_at + 'Z')).dateStr
-          : null;
-
-        if (lastLocalDate === dateStr) continue; // already ran today, in the user's own timezone
-        if (!task.days_of_week.split(',').includes(weekday)) continue; // not scheduled today
-        if (hour < task.hour) continue; // not time yet
-
         try {
+          // Eligibility resolution lives inside this same try block, not before it - a
+          // malformed days_of_week or an invalid IANA timezone (getUserLocalNow uses
+          // Intl.DateTimeFormat internally, which throws on a bad zone) must be treated
+          // exactly like an execution failure for THIS task, not allowed to propagate
+          // past the loop and abandon every other candidate still waiting in this tick.
+          const tz = task.timezone || 'America/Chicago';
+          const { hour, dateStr, weekday } = getUserLocalNow(tz);
+          const lastLocalDate = task.last_run_at
+            ? getUserLocalNow(tz, new Date(task.last_run_at + 'Z')).dateStr
+            : null;
+
+          if (lastLocalDate === dateStr) continue; // already ran today, in the user's own timezone
+          if (!task.days_of_week.split(',').includes(weekday)) continue; // not scheduled today
+          if (hour < task.hour) continue; // not time yet
+
           logger.info(`Triggering recurring task "${task.label}" for user: ${task.username}`);
           await runRecurringTask(db, task);
         } catch (err) {
