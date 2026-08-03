@@ -39,10 +39,9 @@ router.post('/:id/read', authenticateToken, async (req, res) => {
     // Content-free signal only (no message text) - a second open tab for this same user
     // otherwise keeps showing a stale unread badge until it happens to receive a brand
     // new notification, since marking read here was previously a silent REST call no
-    // other tab could observe. The alerts stream isn't per-user scoped, so another user's
-    // tab may also receive this, but GET /api/notifications is scoped by their own token,
-    // so a spurious refetch there just returns their own unchanged counts - harmless.
-    broadcastAlert({ type: 'notif_sync' });
+    // other tab could observe. Scoped to this user's own connections now that
+    // broadcastAlert supports it (previously went to every connected client).
+    broadcastAlert({ type: 'notif_sync' }, req.user.id);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -53,7 +52,7 @@ router.post('/read-all', authenticateToken, async (req, res) => {
   try {
     const db = await getDb();
     await db.run('UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0', [req.user.id]);
-    broadcastAlert({ type: 'notif_sync' });
+    broadcastAlert({ type: 'notif_sync' }, req.user.id);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

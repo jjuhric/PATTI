@@ -20,7 +20,14 @@ async function notifyUser(db, userId, { type = 'info', message, chatId = null } 
   const notificationId = result.lastID;
 
   try {
-    broadcastAlert({ type, message, chatId: chatId || null, notificationId, timestamp: new Date().toISOString() });
+    // Scoped to this user's own connected tabs/devices only - the message text and
+    // chatId here are real, private content (unlike the system-status alerts elsewhere
+    // in this codebase, which are deliberately broadcast to everyone so the standalone
+    // monitor_dashboard app can watch activity across all users). Without this, another
+    // logged-in user's tab would receive - and previously, before notif_sync existed,
+    // would have surfaced as a toast - this user's own "your X is ready" notifications,
+    // including a chatId that could be used to navigate into their conversation.
+    broadcastAlert({ type, message, chatId: chatId || null, notificationId, timestamp: new Date().toISOString() }, userId);
   } catch (err) {
     logger.warn('[Notifications] Failed to broadcast live alert:', err.message);
   }

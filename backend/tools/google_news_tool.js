@@ -2,13 +2,46 @@ const { GoogleDecoder } = require('google-news-url-decoder');
 const { extractFirst100Words } = require('../utils/helpers');
 const cheerio = require('cheerio');
 
+// Plain fetch() has no default read timeout - a slow/unresponsive RSS feed or the RSS.app
+// GraphQL endpoint hangs indefinitely (the exact, already-documented failure mode
+// news_tool.js was fixed for - "an 11+ minute hang before the whole news_agent delegation
+// finally surfaced a bare 'fetch failed'"). This sibling file had the identical gap on its
+// own primary fetches: this news lookup is also what sports_tool.js's getTeamNews() falls
+// back to when Bleacher Report scraping fails, so an unbounded hang here stalls a sports
+// delegation too, not just a news one - exactly the "fails when called alongside other
+// requests" symptom, since the whole multi-part Supervisor turn waits on it.
+const GRAPHQL_TIMEOUT_MS = 8000;
+const RSS_FETCH_TIMEOUT_MS = 8000;
+const DECODE_TIMEOUT_MS = 6000;
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// GoogleDecoder (a third-party lib) makes its own internal fetch() calls with no way to
+// pass an AbortSignal in, so a hung request can't be cancelled - this just bounds how long
+// we're willing to wait on its result before giving up and falling back to the original
+// (undecoded) link.
+function withTimeout(promise, timeoutMs, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs))
+  ]);
+}
+
 // Helper to query RSS.app GraphQL API
 async function queryGraphQL(queryStr, variables) {
-  const res = await fetch('https://rss.app/gql', {
+  const res = await fetchWithTimeout('https://rss.app/gql', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query: queryStr, variables })
-  });
+  }, GRAPHQL_TIMEOUT_MS);
   if (!res.ok) throw new Error(`GraphQL request failed: status ${res.status}`);
   return res.json();
 }
@@ -156,7 +189,7 @@ async function handleGoogleNewsTool(query) {
         : 'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en';
     }
       
-    const response = await fetch(rssUrl);
+    const response = await fetchWithTimeout(rssUrl, {}, RSS_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error('Failed to fetch news RSS feed');
     const xml = await response.text();
 
@@ -182,7 +215,7 @@ async function handleGoogleNewsTool(query) {
         try {
           let destinationLink = art.link;
           try {
-            const decoded = await decoder.decode(art.link);
+            const decoded = await withTimeout(decoder.decode(art.link), DECODE_TIMEOUT_MS, 'Google News URL decode');
             if (decoded && decoded.status) {
               destinationLink = decoded.decoded_url;
             }

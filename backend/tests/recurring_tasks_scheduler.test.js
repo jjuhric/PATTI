@@ -80,7 +80,7 @@ describe('utils/recurring_tasks_scheduler.js', () => {
         expect.stringContaining('UPDATE recurring_tasks SET last_run_at'),
         [1]
       );
-      expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'info' }));
+      expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'info' }), 1);
     });
 
     test('fetches news when news_query is set on the task', async () => {
@@ -195,7 +195,7 @@ describe('utils/recurring_tasks_scheduler.js', () => {
       expect(lastRunUpdateCalls.some(call => call[1][0] === 1)).toBe(false);
       expect(lastRunUpdateCalls.some(call => call[1][0] === 2)).toBe(true);
 
-      expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+      expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }), 1);
     });
 
     test('a malformed days_of_week on one task does not abort processing of other candidates in the same tick (BUG-2 regression)', async () => {
@@ -217,7 +217,7 @@ describe('utils/recurring_tasks_scheduler.js', () => {
       // candidate in the tick, not just the malformed one.
       expect(buildSettingsForUser).toHaveBeenCalledTimes(1);
       expect(buildSettingsForUser).toHaveBeenCalledWith(mockDb, 2);
-      expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+      expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }), 1);
     });
 
     test('handles scheduler database check error without throwing', async () => {

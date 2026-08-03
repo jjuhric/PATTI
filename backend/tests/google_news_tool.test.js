@@ -67,6 +67,31 @@ describe('Google News Tool Tests', () => {
     expect(parsed).toHaveProperty('error');
   });
 
+  test('does not hang forever when the RSS feed fetch never resolves (regression - was a bare fetch() with no timeout)', async () => {
+    jest.useFakeTimers();
+    // A promise that never settles on its own, simulating an unresponsive RSS feed -
+    // before the fix, google_news_tool.js's fallback fetch(rssUrl) call had no
+    // AbortController/timeout at all, unlike news_tool.js's sibling implementation
+    // (already fixed for this exact documented hang). Without the fix, this test
+    // would never resolve and would time out the whole test run instead of the
+    // internal 8s guard firing.
+    global.fetch.mockImplementationOnce((url, options) => new Promise((resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        reject(err);
+      });
+    }));
+
+    const resultPromise = handleGoogleNewsTool('hanging query');
+    await jest.advanceTimersByTimeAsync(8000);
+    const result = await resultPromise;
+    const parsed = JSON.parse(result);
+
+    expect(parsed).toHaveProperty('error');
+    jest.useRealTimers();
+  });
+
   test('handles decode URL failure and handles scrape content timeout', async () => {
     // Mock 1: RSS feed response with a link that will trigger decode error
     global.fetch.mockResolvedValueOnce({

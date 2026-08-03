@@ -136,7 +136,7 @@ describe('handleCourseBuilderTool', () => {
     expect(message.content).toContain(row.output_path);
     expect(message.content).toContain('Intro to Testing');
 
-    expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'info' }));
+    expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'info' }), userId);
 
     const notification = await db.get('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
     expect(notification.type).toBe('info');
@@ -173,7 +173,7 @@ describe('handleCourseBuilderTool', () => {
     const chat = await db.get('SELECT * FROM chats WHERE user_id = ? AND title = ?', [userId, RESULTS_CHAT_TITLE]);
     const message = await db.get('SELECT * FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', [chat.id]);
     expect(message.content).toMatch(/Course generation failed/);
-    expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+    expect(mockBroadcastAlert).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }), userId);
 
     const notification = await db.get('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', [userId]);
     expect(notification.type).toBe('error');
