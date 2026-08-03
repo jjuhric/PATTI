@@ -1230,4 +1230,169 @@ describe('Multi-Agent System & Tools Tests', () => {
     });
 
   });
+
+  // QW-4 (audit): the dynamic custom-tool pipeline (createRegistryTool -> validateRegistryTool
+  // -> mountRegistryTool, covered by tool_manager.test.js) had never actually been exercised
+  // through the real *invocation* path a live agent turn uses - the dispatch branch in
+  // runWorkerAgent that requires() a freshly-mounted handler.js off disk and calls it. These
+  // tests write a real file to backend/tools/dynamic/ (the same real path the dispatch code
+  // reads, matching tool_manager.test.js's own precedent) and drive runWorkerAgent through it.
+  //
+  // Each test uses its own uniquely-named tool directory rather than sharing one. Node's
+  // require() caches modules by resolved path for the life of the process, and Jest's own
+  // module registry does not honor manual require.cache invalidation the way plain Node does
+  // (confirmed directly: deleting require.cache[require.resolve(path)] and re-requiring under
+  // Jest still returns the stale module, while the identical sequence in a standalone `node`
+  // script correctly picks up the new file content) - so reusing one path across tests would
+  // make later tests see whichever handler.js an earlier test happened to require first,
+  // regardless of what was actually written to disk for that test.
+  describe('runWorkerAgent - dynamic custom tool dispatch (end-to-end)', () => {
+    const writtenDirs = [];
+
+    afterEach(() => {
+      for (const dir of writtenDirs.splice(0)) {
+        if (fs.existsSync(dir)) {
+          fs.rmSync(dir, { recursive: true, force: true });
+        }
+      }
+    });
+
+    function writeDynamicTool(toolName, handlerCode) {
+      const dir = path.join(__dirname, '../tools/dynamic', toolName);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'handler.js'), handlerCode);
+      writtenDirs.push(dir);
+    }
+
+    // The tool's raw output text is embedded two JSON.stringify layers deep (once as a
+    // "History Context" array serialized into a prompt string, and again as that whole
+    // prompt becoming a "content" field in the outer request body) - naive substring
+    // matching against the raw, doubly-escaped body is unreliable. Parse both layers back
+    // out to get the literal observation text the handler's own output produced.
+    function extractToolObservationText(body) {
+      const parsed = JSON.parse(body);
+      const userMsg = parsed.messages.find(m => m.role === 'user' && typeof m.content === 'string' && m.content.includes('History Context'));
+      const match = userMsg.content.match(/History Context: (\[[\s\S]*\])$/);
+      const history = JSON.parse(match[1]);
+      const toolMsg = history.find(h => h.role === 'user' && h.content.includes('Tool Output'));
+      return toolMsg.content;
+    }
+
+    function mockToolThenFinish(toolDecision, finalText = 'Final summary') {
+      let calls = 0;
+      return jest.fn().mockImplementation((url) => {
+        const urlStr = url || '';
+        if (urlStr.includes('completions')) {
+          calls++;
+          if (calls === 1) {
+            return Promise.resolve({
+              ok: true,
+              headers: { get: () => 'application/json' },
+              json: async () => ({ choices: [{ message: { content: JSON.stringify(toolDecision) } }] })
+            });
+          } else if (calls === 2) {
+            return Promise.resolve({
+              ok: true,
+              headers: { get: () => 'application/json' },
+              json: async () => ({ choices: [{ message: { content: JSON.stringify({ thought: 'Done', tool: 'none' }) } }] })
+            });
+          }
+          return Promise.resolve({
+            ok: true,
+            headers: { get: () => 'application/json' },
+            json: async () => ({ choices: [{ message: { content: finalText } }] })
+          });
+        }
+        return Promise.resolve({ ok: true, headers: { get: () => 'application/json' }, json: async () => ({ choices: [], results: [] }) });
+      });
+    }
+
+    function dbWithManifest(toolName, manifest) {
+      return {
+        all: jest.fn().mockResolvedValue([]),
+        get: jest.fn().mockImplementation(async (query, params) => {
+          if (query.includes('FROM installed_tools') && params && params[0] === toolName) {
+            return manifest ? { manifest: JSON.stringify(manifest) } : null;
+          }
+          return null;
+        })
+      };
+    }
+
+    test('a freshly mounted dynamic tool is actually require()-d and invoked, receiving the documented (action, params, options) signature', async () => {
+      const toolName = 'qw4_e2e_success';
+      writeDynamicTool(toolName, `
+        module.exports = {
+          handleQw4E2eTool: async (action, params, options) => {
+            return JSON.stringify({
+              success: true,
+              action,
+              params,
+              hasDb: !!(options && options.db),
+              userId: options && options.userId
+            });
+          }
+        };
+      `);
+
+      const manifest = { name: toolName, exported_function: 'handleQw4E2eTool' };
+      const globalFetch = global.fetch;
+      global.fetch = mockToolThenFinish({ thought: 'Using the dynamic tool', tool: toolName, action: 'ping', params: { host: 'example.com' } });
+
+      const mockDb = dbWithManifest(toolName, manifest);
+      const result = await runWorkerAgent('coder', { provider: 'openai', modelName: 'gpt-4' }, 'Ping example.com using the dynamic tool', mockDb, 42);
+
+      // The real proof this pipeline works end-to-end: the handler's own JSON output made
+      // it into the DB lookup call (confirming dispatch actually ran require() + invoke,
+      // not a mock), and the second observation round-trip picked it up before finishing.
+      expect(mockDb.get).toHaveBeenCalledWith(expect.stringContaining('FROM installed_tools'), [toolName]);
+      expect(result).toContain('Final summary');
+      // mock.calls records every fetch() invocation, not just completions calls (other
+      // code paths may fetch too) - filter to completions calls before indexing, so
+      // index 1 reliably means "the second decision-loop turn," not "the second fetch()."
+      const completionsCalls = global.fetch.mock.calls.filter(([url]) => (url || '').includes('completions'));
+      const observation = extractToolObservationText(completionsCalls[1][1].body);
+      expect(observation).toContain('"hasDb":true');
+      expect(observation).toContain('"userId":42');
+
+      global.fetch = globalFetch;
+    });
+
+    test('a registered tool file with no matching installed_tools row fails with a clear error instead of crashing the loop', async () => {
+      const toolName = 'qw4_e2e_missing_row';
+      writeDynamicTool(toolName, 'module.exports = { handleQw4E2eTool: async () => "unused" };');
+
+      const globalFetch = global.fetch;
+      global.fetch = mockToolThenFinish({ thought: 'Using the dynamic tool', tool: toolName, action: 'ping', params: {} });
+
+      const mockDb = dbWithManifest(toolName, null); // no installed_tools row for this tool
+      const result = await runWorkerAgent('coder', { provider: 'openai', modelName: 'gpt-4' }, 'Ping using the dynamic tool', mockDb, 42);
+
+      expect(result).toContain('Final summary');
+      const completionsCalls = global.fetch.mock.calls.filter(([url]) => (url || '').includes('completions'));
+      const observation = extractToolObservationText(completionsCalls[1][1].body);
+      expect(observation).toContain(`Dynamic tool "${toolName}" is not registered in database.`);
+
+      global.fetch = globalFetch;
+    });
+
+    test('a manifest pointing at an exported_function the handler module does not have fails with a clear error', async () => {
+      const toolName = 'qw4_e2e_bad_export';
+      writeDynamicTool(toolName, 'module.exports = { someOtherFunctionName: async () => "unused" };');
+
+      const manifest = { name: toolName, exported_function: 'handleQw4E2eTool' };
+      const globalFetch = global.fetch;
+      global.fetch = mockToolThenFinish({ thought: 'Using the dynamic tool', tool: toolName, action: 'ping', params: {} });
+
+      const mockDb = dbWithManifest(toolName, manifest);
+      const result = await runWorkerAgent('coder', { provider: 'openai', modelName: 'gpt-4' }, 'Ping using the dynamic tool', mockDb, 42);
+
+      expect(result).toContain('Final summary');
+      const completionsCalls = global.fetch.mock.calls.filter(([url]) => (url || '').includes('completions'));
+      const observation = extractToolObservationText(completionsCalls[1][1].body);
+      expect(observation).toContain('Exported function "handleQw4E2eTool" not found in dynamic tool module');
+
+      global.fetch = globalFetch;
+    });
+  });
 });
