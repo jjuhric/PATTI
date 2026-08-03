@@ -158,12 +158,24 @@ describe('GET/POST /api/notifications', () => {
     const resBefore = await request(app).get('/api/notifications').set('Authorization', `Bearer ${tokenA}`);
     const targetId = resBefore.body.notifications[0].id;
 
+    mockBroadcastAlert.mockClear();
     const readRes = await request(app).post(`/api/notifications/${targetId}/read`).set('Authorization', `Bearer ${tokenA}`);
     expect(readRes.statusCode).toBe(200);
     expect(readRes.body.success).toBe(true);
 
     const resAfter = await request(app).get('/api/notifications').set('Authorization', `Bearer ${tokenA}`);
     expect(resAfter.body.unreadCount).toBe(1);
+
+    // R2: a content-free sync signal, so a second open tab for this user refreshes its bell
+    // badge immediately instead of waiting for its own next real notification.
+    expect(mockBroadcastAlert).toHaveBeenCalledWith({ type: 'notif_sync' });
+  });
+
+  test('POST /:id/read does not broadcast a sync signal when the notification id is not found', async () => {
+    mockBroadcastAlert.mockClear();
+    const res = await request(app).post('/api/notifications/999999/read').set('Authorization', `Bearer ${tokenA}`);
+    expect(res.statusCode).toBe(404);
+    expect(mockBroadcastAlert).not.toHaveBeenCalled();
   });
 
   test('POST /:id/read returns 404 for another user\'s notification id', async () => {
@@ -174,7 +186,8 @@ describe('GET/POST /api/notifications', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  test('POST /read-all zeroes all of one user\'s unread rows and leaves the other user\'s untouched', async () => {
+  test('POST /read-all zeroes all of one user\'s unread rows, leaves the other user\'s untouched, and broadcasts a sync signal', async () => {
+    mockBroadcastAlert.mockClear();
     const readAllRes = await request(app).post('/api/notifications/read-all').set('Authorization', `Bearer ${tokenA}`);
     expect(readAllRes.statusCode).toBe(200);
 
@@ -183,6 +196,8 @@ describe('GET/POST /api/notifications', () => {
 
     const resB = await request(app).get('/api/notifications').set('Authorization', `Bearer ${tokenB}`);
     expect(resB.body.unreadCount).toBe(1);
+
+    expect(mockBroadcastAlert).toHaveBeenCalledWith({ type: 'notif_sync' });
   });
 
   test('database errors return 500', async () => {
