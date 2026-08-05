@@ -57,7 +57,7 @@
     "seed:docs": "node scripts/seed_system_docs.js"
   },
   "devDependencies": {
-    "jest": "^29.7.0",
+    "jest": "^30.4.2",
     "supertest": "^7.0.0"
   },
   "overrides": {
