@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
   favorite_teams TEXT DEFAULT '[]',
   timezone TEXT DEFAULT 'America/Chicago',
   is_admin INTEGER DEFAULT 0,
+  tokens_valid_after DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -32,7 +33,33 @@ CREATE TABLE IF NOT EXISTS messages (
   content TEXT NOT NULL,
   thoughts TEXT, -- reasoning/steps
   is_error INTEGER DEFAULT 0, -- 1 when this assistant message records a failed turn (see routes/chat.js)
+  -- BUG-13 (docs/REVIEW_2026-08-03.md): JSON array of worker agent names delegated to for this
+  -- turn, captured from onAgentStatus events - lets feedback_learning.js attribute what actually
+  -- ran, since subtask_results (the richer record) is deleted at the end of every turn.
+  agents_used TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+);
+
+-- Human-in-the-loop command/file approvals (SEC-3, docs/REVIEW_2026-08-03.md). Created by the
+-- real verification code path (coder_tools.js) when it decides an action needs human sign-off;
+-- the chat-based "yes"/"no" reply is matched against this row, not re-parsed from the displayed
+-- message text, so a model that's been prompt-injected into fabricating a fake approval prompt
+-- can't get anything executed - there's no matching pending row for it to resolve.
+CREATE TABLE IF NOT EXISTS pending_approvals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token TEXT UNIQUE NOT NULL,
+  user_id INTEGER NOT NULL,
+  chat_id INTEGER NOT NULL,
+  action TEXT NOT NULL, -- 'execute_command' | 'write_file'
+  agent_name TEXT,
+  command TEXT,
+  file_path TEXT,
+  file_content TEXT,
+  status TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'approved' | 'rejected' | 'superseded'
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  resolved_at DATETIME,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
 );
 
@@ -283,6 +310,12 @@ CREATE TABLE IF NOT EXISTS subtask_results (
   task_label TEXT,
   result_text TEXT,
   status TEXT NOT NULL DEFAULT 'done', -- 'done' | 'error'
+  -- ENH-4 (docs/REVIEW_2026-08-03.md): the Supervisor's full decision object for this
+  -- delegation - {thought, tool, action, params} as JSON, not just the thought string that
+  -- used to be all that was kept. Lets the monitor dashboard eventually show a real decision
+  -- record (what was actually asked for, not just a one-line rationale) instead of only a
+  -- scrolling thought log.
+  decision_json TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
 );

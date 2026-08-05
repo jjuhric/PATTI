@@ -109,7 +109,12 @@ async function runChatStream({
   try {
     const { broadcastAlert } = require('../routes/alerts');
     broadcastAlert({ type: 'streaming_status', isStreaming: true });
-  } catch (e) {}
+  } catch (e) {
+    // BUG-12 (docs/REVIEW_2026-08-03.md): best-effort monitor-dashboard notification - the
+    // chat turn itself must not fail just because the alert bus is down. Logged so a
+    // persistently broken alert bus isn't invisible.
+    console.debug('[Chat Stream Alert] Failed to broadcast streaming_status:', e.message);
+  }
 
   await enqueue(async (onThoughtCallback) => {
     try {
@@ -142,7 +147,10 @@ async function runChatStream({
           try {
             const { broadcastAlert } = require('../routes/alerts');
             broadcastAlert({ type: 'tool_call', toolCall });
-          } catch (e) {}
+          } catch (e) {
+            // BUG-12: same best-effort monitor-dashboard notification as above.
+            console.debug('[Chat Stream Alert] Failed to broadcast tool_call:', e.message);
+          }
         },
         onAgentStatus: (statusData) => {
           onAgentStatus(statusData);
@@ -153,7 +161,10 @@ async function runChatStream({
               agent: statusData.agent,
               status: statusData.status
             });
-          } catch (e) {}
+          } catch (e) {
+            // BUG-12: same best-effort monitor-dashboard notification as above.
+            console.debug('[Chat Stream Alert] Failed to broadcast agent_status:', e.message);
+          }
         },
         onCommandApprovalRequired
       });
@@ -161,7 +172,10 @@ async function runChatStream({
       try {
         const { broadcastAlert } = require('../routes/alerts');
         broadcastAlert({ type: 'agent_status', agent: 'communication_specialist', status: 'active' });
-      } catch (e) {}
+      } catch (e) {
+        // BUG-12: same best-effort monitor-dashboard notification as above.
+        console.debug('[Chat Stream Alert] Failed to broadcast final agent_status reset:', e.message);
+      }
     }
   }, { nodeId, name: taskName || 'Chat Request', origin, abortController });
 

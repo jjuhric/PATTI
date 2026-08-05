@@ -3,6 +3,7 @@ const { decrypt } = require('./crypto');
 const { llmFetchSignal } = require('./fetchTimeout');
 const { defaultOnlineBaseUrl, resolveTarget, resolveEndpoint, buildHeaders, buildBody, extractResponseText } = require('../llm/provider_config');
 const { stripThinkTags } = require('../llm/think_filter');
+const { estimateTokens, logTokenUsage } = require('./tokenAccounting');
 
 // Build the LLM-calling settings object for a specific userId with no active HTTP request
 // in scope - same approach backend/services/research_daemon.js uses for its own background
@@ -68,13 +69,8 @@ async function generateTextRaw(settings, systemPrompt, userPrompt) {
     respText = result.response.text();
 
     const tokenCount = result.response.usageMetadata?.totalTokenCount
-      || Math.ceil((systemPrompt.length + userPrompt.length + respText.length) / 4);
-    if (db && userId) {
-      db.run(
-        'INSERT INTO token_usage (user_id, model_name, provider_type, token_count) VALUES (?, ?, ?, ?)',
-        [userId, modelName || 'gemini-2.0-flash', provider === 'local' ? 'local' : 'online', tokenCount]
-      ).catch(() => {});
-    }
+      || estimateTokens(systemPrompt + userPrompt + respText);
+    logTokenUsage(db, userId, modelName || 'gemini-2.0-flash', provider === 'local' ? 'local' : 'online', tokenCount, 'generateTextRaw Gemini');
   } else {
     const { targetUrl, targetKey, targetStyle } = resolveTarget(settings);
     const headers = buildHeaders(targetKey, targetStyle);
@@ -102,13 +98,8 @@ async function generateTextRaw(settings, systemPrompt, userPrompt) {
 
     const tokenCount = data.usage?.total_tokens
       || (data.usage?.input_tokens && data.usage?.output_tokens ? data.usage.input_tokens + data.usage.output_tokens : null)
-      || Math.ceil((systemPrompt.length + userPrompt.length + respText.length) / 4);
-    if (db && userId) {
-      db.run(
-        'INSERT INTO token_usage (user_id, model_name, provider_type, token_count) VALUES (?, ?, ?, ?)',
-        [userId, modelName || 'unknown', provider === 'local' ? 'local' : 'online', tokenCount]
-      ).catch(() => {});
-    }
+      || estimateTokens(systemPrompt + userPrompt + respText);
+    logTokenUsage(db, userId, modelName || 'unknown', provider === 'local' ? 'local' : 'online', tokenCount, 'generateTextRaw non-Gemini');
   }
 
   return stripThinkTags(respText);

@@ -1,28 +1,67 @@
 const request = require('supertest');
 const express = require('express');
-const hostRouter = require('../routes/host');
+const jwt = require('jsonwebtoken');
 const hostMachineTool = require('../tools/host_machine_tool');
-
-// Mock auth middleware
-jest.mock('../middleware/auth', () => ({
-  authenticateToken: (req, res, next) => {
-    req.user = { id: 1 };
-    next();
-  }
-}));
 
 // Mock host_machine_tool
 jest.mock('../tools/host_machine_tool', () => ({
   handleHostMachineTool: jest.fn()
 }));
 
+// requireAdmin (backend/middleware/adminAuth.js) checks the live is_admin flag in the DB, so
+// unlike before, these routes now need a real (in-memory) DB and real JWTs for an admin and a
+// non-admin user - the same pattern used in tests/admin.test.js.
+let mockTestDb = null;
+jest.mock('../db', () => {
+  const { open } = require('sqlite');
+  const sqlite3 = require('sqlite3');
+  const fs = require('fs');
+  const path = require('path');
+
+  return {
+    getDb: async () => {
+      if (mockTestDb) return mockTestDb;
+      mockTestDb = await open({
+        filename: ':memory:',
+        driver: sqlite3.Database
+      });
+      const schemaSql = fs.readFileSync(path.join(__dirname, '../schema.sql'), 'utf8');
+      await mockTestDb.exec(schemaSql);
+      return mockTestDb;
+    }
+  };
+});
+
+const hostRouter = require('../routes/host');
+const { JWT_SECRET } = require('../middleware/auth');
+
 describe('Host Route Telemetry and Control Tests', () => {
   let app;
+  let adminToken;
+  let regularToken;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     app = express();
     app.use(express.json());
     app.use('/api/host', hostRouter);
+
+    const db = await mockTestDb || (await require('../db').getDb());
+    const adminRes = await mockTestDb.run(
+      "INSERT INTO users (username, password_hash, is_admin) VALUES ('host_admin', 'hashed', 1)"
+    );
+    adminToken = jwt.sign({ id: adminRes.lastID, username: 'host_admin' }, JWT_SECRET);
+
+    const regularRes = await mockTestDb.run(
+      "INSERT INTO users (username, password_hash, is_admin) VALUES ('host_regular', 'hashed', 0)"
+    );
+    regularToken = jwt.sign({ id: regularRes.lastID, username: 'host_regular' }, JWT_SECRET);
+  });
+
+  afterAll(async () => {
+    if (mockTestDb) {
+      await mockTestDb.close();
+      mockTestDb = null;
+    }
   });
 
   beforeEach(() => {
@@ -38,7 +77,7 @@ describe('Host Route Telemetry and Control Tests', () => {
       return Promise.resolve('');
     });
 
-    const res = await request(app).get('/api/host/status');
+    const res = await request(app).get('/api/host/status').set('Authorization', `Bearer ${regularToken}`);
 
     expect(res.statusCode).toBe(200);
     expect(res.body.cpu).toBeDefined();
@@ -49,15 +88,26 @@ describe('Host Route Telemetry and Control Tests', () => {
 
   test('GET /api/host/status handles failure', async () => {
     hostMachineTool.handleHostMachineTool.mockRejectedValue(new Error('Telemetry failure'));
-    const res = await request(app).get('/api/host/status');
+    const res = await request(app).get('/api/host/status').set('Authorization', `Bearer ${regularToken}`);
     expect(res.statusCode).toBe(500);
     expect(res.body.error).toBe('Telemetry failure');
   });
 
-  test('POST /api/host/service/restart restarts whitelisted service', async () => {
+  test('POST /api/host/service/restart is blocked for a non-admin user', async () => {
+    const res = await request(app)
+      .post('/api/host/service/restart')
+      .set('Authorization', `Bearer ${regularToken}`)
+      .send({ service: 'test-service' });
+
+    expect(res.statusCode).toBe(403);
+    expect(hostMachineTool.handleHostMachineTool).not.toHaveBeenCalled();
+  });
+
+  test('POST /api/host/service/restart restarts a service for an admin', async () => {
     hostMachineTool.handleHostMachineTool.mockResolvedValue('Successfully restarted service "test-service".');
     const res = await request(app)
       .post('/api/host/service/restart')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({ service: 'test-service' });
 
     expect(res.statusCode).toBe(200);
@@ -68,6 +118,7 @@ describe('Host Route Telemetry and Control Tests', () => {
     hostMachineTool.handleHostMachineTool.mockResolvedValue('Failed to restart service - systemd error.');
     const res = await request(app)
       .post('/api/host/service/restart')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({ service: 'test-service' });
 
     expect(res.statusCode).toBe(400);
@@ -78,6 +129,7 @@ describe('Host Route Telemetry and Control Tests', () => {
     hostMachineTool.handleHostMachineTool.mockRejectedValue(new Error('Restart throw error'));
     const res = await request(app)
       .post('/api/host/service/restart')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({ service: 'test-service' });
 
     expect(res.statusCode).toBe(500);
@@ -87,15 +139,27 @@ describe('Host Route Telemetry and Control Tests', () => {
   test('POST /api/host/service/restart returns 400 if service is missing', async () => {
     const res = await request(app)
       .post('/api/host/service/restart')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({});
 
     expect(res.statusCode).toBe(400);
   });
 
-  test('POST /api/host/gpio/run triggers safe script execution', async () => {
+  test('POST /api/host/gpio/run is blocked for a non-admin user', async () => {
+    const res = await request(app)
+      .post('/api/host/gpio/run')
+      .set('Authorization', `Bearer ${regularToken}`)
+      .send({ scriptPath: 'script.py' });
+
+    expect(res.statusCode).toBe(403);
+    expect(hostMachineTool.handleHostMachineTool).not.toHaveBeenCalled();
+  });
+
+  test('POST /api/host/gpio/run triggers script execution for an admin', async () => {
     hostMachineTool.handleHostMachineTool.mockResolvedValue('Script output');
     const res = await request(app)
       .post('/api/host/gpio/run')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({ scriptPath: 'script.py' });
 
     expect(res.statusCode).toBe(200);
@@ -107,6 +171,7 @@ describe('Host Route Telemetry and Control Tests', () => {
     hostMachineTool.handleHostMachineTool.mockRejectedValue(new Error('Script throw error'));
     const res = await request(app)
       .post('/api/host/gpio/run')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({ scriptPath: 'script.py' });
 
     expect(res.statusCode).toBe(500);
@@ -116,6 +181,7 @@ describe('Host Route Telemetry and Control Tests', () => {
   test('POST /api/host/gpio/run returns 400 if scriptPath is missing', async () => {
     const res = await request(app)
       .post('/api/host/gpio/run')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({});
 
     expect(res.statusCode).toBe(400);

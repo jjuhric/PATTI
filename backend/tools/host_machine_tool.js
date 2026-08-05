@@ -9,6 +9,22 @@ const { measureCpuTemp } = require('./temp_tool');
 
 const { resolveSafePath } = require('../utils/pathSecurity');
 
+// Service/task names are only ever alphanumeric plus a few separator characters on both
+// Windows (Get-Service/scheduled task names) and Linux (systemd unit names). Rejecting
+// anything else closes off shell metacharacters (;, &, |, `, $(), spaces, quotes) before
+// the value ever reaches exec() - see SEC-1 in docs/REVIEW_2026-08-03.md.
+const SAFE_SERVICE_NAME = /^[a-zA-Z0-9_.-]{1,128}$/;
+function isValidServiceName(service) {
+  return typeof service === 'string' && SAFE_SERVICE_NAME.test(service);
+}
+
+// Uploaded chat attachments are untrusted user content, not something the host-control
+// tool should ever be allowed to execute as a script - see SEC-2 in docs/REVIEW_2026-08-03.md.
+function isUnderUntrustedUploadDir(absolutePath) {
+  const uploadsRoot = path.resolve(process.cwd(), 'chat_attachments') + path.sep;
+  return path.resolve(absolutePath).startsWith(uploadsRoot);
+}
+
 /**
  * Helper to fetch power/battery info via INA219 helper script.
  */
@@ -219,6 +235,7 @@ async function handleHostMachineTool(action, params = {}, userId = 1) {
   if (action === 'get_service_status') {
     const { service } = params;
     if (!service) return 'Error: "service" parameter is required.';
+    if (!isValidServiceName(service)) return 'Error: "service" contains invalid characters. Only letters, numbers, ".", "_", and "-" are allowed.';
     try {
       const platform = os.platform();
       if (platform === 'win32') {
@@ -259,6 +276,7 @@ async function handleHostMachineTool(action, params = {}, userId = 1) {
   if (action === 'get_journal_logs') {
     const { service, lines } = params;
     if (!service) return 'Error: "service" parameter is required.';
+    if (!isValidServiceName(service)) return 'Error: "service" contains invalid characters. Only letters, numbers, ".", "_", and "-" are allowed.';
     const numLines = Math.max(Number(lines) || 1000, 1000);
     try {
       const platform = os.platform();
@@ -283,6 +301,7 @@ async function handleHostMachineTool(action, params = {}, userId = 1) {
   if (action === 'restart_service') {
     const { service } = params;
     if (!service) return 'Error: "service" parameter is required.';
+    if (!isValidServiceName(service)) return 'Error: "service" contains invalid characters. Only letters, numbers, ".", "_", and "-" are allowed.';
     try {
       const platform = os.platform();
       if (platform === 'win32') {
@@ -314,6 +333,9 @@ async function handleHostMachineTool(action, params = {}, userId = 1) {
     if (!scriptPath) return 'Error: "scriptPath" parameter is required.';
     try {
       const safePath = resolveSafePath(scriptPath);
+      if (isUnderUntrustedUploadDir(safePath)) {
+        return 'Error: Refusing to execute a script from the chat attachments directory - uploaded files are untrusted user content.';
+      }
       if (!fs.existsSync(safePath)) {
         return `Error: Script not found at "${scriptPath}".`;
       }

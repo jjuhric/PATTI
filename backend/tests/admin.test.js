@@ -75,6 +75,37 @@ describe('Admin API Router Tests', () => {
     expect(usernames).toContain('regular_user');
   });
 
+  test('POST /api/admin/users creates a new account, admin-only, bypassing the invite-code gate', async () => {
+    const resDenied = await request(app)
+      .post('/api/admin/users')
+      .set('Authorization', `Bearer ${regularToken}`)
+      .send({ username: 'onboarded', password: 'password123' });
+    expect(resDenied.statusCode).toBe(403);
+
+    const res = await request(app)
+      .post('/api/admin/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ username: 'onboarded', password: 'password123' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.userId).toBeDefined();
+
+    const db = await mockTestDb;
+    const created = await db.get('SELECT is_admin FROM users WHERE username = ?', ['onboarded']);
+    expect(created.is_admin).toBe(0);
+
+    const dupRes = await request(app)
+      .post('/api/admin/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ username: 'onboarded', password: 'password123' });
+    expect(dupRes.statusCode).toBe(400);
+
+    const shortPassRes = await request(app)
+      .post('/api/admin/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ username: 'shortpass', password: 'ab' });
+    expect(shortPassRes.statusCode).toBe(400);
+  });
+
   test('PUT /api/admin/users/:id/quota updates quota, rejects invalid values', async () => {
     const res = await request(app)
       .put(`/api/admin/users/${regularId}/quota`)

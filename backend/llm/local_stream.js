@@ -1,6 +1,7 @@
 const logger = require('../utils/logger');
 const { buildHeaders, resolveEndpoint, buildStreamBody, extractResponseText } = require('./provider_config');
 const { ThinkTagFilter, stripThinkTags } = require('./think_filter');
+const { estimateTokens, logTokenUsage } = require('../utils/tokenAccounting');
 
 // A cold model load in LM Studio can take longer than a minute before a single token is
 // emitted, so a 60s ceiling aborted perfectly healthy requests that merely had to wait for the
@@ -111,19 +112,9 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
       tokenCount = data.usage.input_tokens + data.usage.output_tokens;
     } else {
       const promptText = JSON.stringify(messages);
-      tokenCount = Math.ceil((promptText.length + fullResponseText.length) / 4);
+      tokenCount = estimateTokens(promptText + fullResponseText);
     }
-    if (db && typeof db.run === 'function' && userId) {
-      const providerType = provider === 'local' ? 'local' : 'online';
-      try {
-        await db.run(
-          'INSERT INTO token_usage (user_id, model_name, provider_type, token_count) VALUES (?, ?, ?, ?)',
-          [userId, modelName || 'unknown', providerType, tokenCount]
-        );
-      } catch (err) {
-        console.error('Failed to log non-stream local LLM tokens:', err);
-      }
-    }
+    await logTokenUsage(db, userId, modelName || 'unknown', provider === 'local' ? 'local' : 'online', tokenCount, 'non-stream local LLM');
     return;
   }
 
@@ -187,18 +178,8 @@ async function callLocalLLMStream(baseUrl, apiKey, modelName, messages, apiStyle
 
   // Estimate and log streaming tokens
   const promptText = JSON.stringify(messages);
-  const tokenCount = Math.ceil((promptText.length + fullResponseText.length) / 4);
-  if (db && typeof db.run === 'function' && userId) {
-    const providerType = provider === 'local' ? 'local' : 'online';
-    try {
-      await db.run(
-        'INSERT INTO token_usage (user_id, model_name, provider_type, token_count) VALUES (?, ?, ?, ?)',
-        [userId, modelName || 'unknown', providerType, tokenCount]
-      );
-    } catch (err) {
-      console.error('Failed to log streaming local LLM tokens:', err);
-    }
-  }
+  const tokenCount = estimateTokens(promptText + fullResponseText);
+  await logTokenUsage(db, userId, modelName || 'unknown', provider === 'local' ? 'local' : 'online', tokenCount, 'streaming local LLM');
 }
 
 module.exports = { callLocalLLMStream, LOCAL_LLM_TIMEOUT_MS, RETRY_BACKOFF_MS };

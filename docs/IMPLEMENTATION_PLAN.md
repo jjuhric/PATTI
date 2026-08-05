@@ -226,19 +226,15 @@ touching, in case that's changed). It did get the `num_ctx` fix directly.
 
 These are independent and can be done in any order. Lower risk than Phases 1–2.
 
-### 3a. Route `web_search_tool` through the extractor
+### 3a. Route `web_search_tool` through the extractor — DONE
 
-`backend/tools/web_search_tool.js` still does blind truncation — it scrapes a page, strips
-tags, and cuts at 3000 characters, which frequently captures navigation and cookie banners
-rather than content. Replace that path with `readPageForRequest` from `utils/web_extract.js`.
-
-Two constraints:
-- The tool's signature is `handleWebSearchTool(db, userId, query)` — it has no LLM settings.
-  Build them with `buildSettingsForUser(db, userId)`.
-- **Budget the calls.** Extraction is one LLM call per page. Cap at 2–3 pages per search, and
-  skip extraction entirely when `ai_queue` is busy (mirror `llmIsBusy()` in
-  `backend/utils/tts_narration.js`), falling back to truncation. A search that fans out to
-  eight pages would stall the assistant for minutes.
+Already implemented (commit `f38380a`, predates the 2026-08-03 review that flagged this as
+BUG-14): `handleWebSearchTool` builds settings via `getExtractorSettings` (which calls
+`buildSettingsForUser(db, userId)` and skips extraction when `llmIsBusy()`), and
+`readUrlContent` routes every scrape through `readPageForRequest` first, falling back to blind
+truncation (`blindScrapeUrl`) only when settings are unavailable or extraction fails. Confirmed
+stale in both this doc and `docs/REVIEW_2026-08-03.md` during the Phase 5 pass; both updated
+rather than re-implementing something that already exists.
 
 ### 3b. Genuine "newly added to streaming" data
 
@@ -253,7 +249,16 @@ Options, best first:
 
 Option 1 is more work but is the only way to get this genuinely right.
 
-### 3c. Make the agent dashboard self-updating
+### 3c. Make the agent dashboard self-updating — DONE
+
+Implemented during the 2026-08-03 review's Phase 4 (tracked there as BUG-4/FEAT-5): added
+`GET /api/agents` (`backend/routes/agents.js`, backed by `AGENT_PROMPTS`'s existing `ownKeys`
+registry), and `monitor_dashboard/src/App.jsx` now fetches it instead of hardcoding a 21-entry
+array, merging with a small `AGENT_PRESENTATION` icon/description map that has a sensible
+default for anything missing. Both `getAgentStatus` comparison chains were replaced with the
+two generic checks described below. Two *more* agents (`automation_handler`,
+`graphics_engineer`) turned out to be missing on top of the six already known, confirming this
+really was a recurring drift rather than a one-off.
 
 **This is a recurring bug, not a one-off.** The agent roster shown in the monitor dashboard is a
 hardcoded `agents` array in `monitor_dashboard/src/App.jsx`, and "is this agent active?" is a
@@ -301,33 +306,40 @@ Frontend changes require a rebuild first — production serves the built bundle 
 cd frontend && npm run build
 ```
 
-Then restart the backend process:
+Then restart the backend process via the scheduled task (see below) rather than a bare
+`Stop-Process`/`Start-Process` pair — the task's launcher (`run-background.vbs`) will otherwise
+just relaunch a bare process outside the task's own lifecycle tracking:
 
 ```powershell
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Select-Object ProcessId, CommandLine
-Stop-Process -Id <pid> -Force
-Start-Process -FilePath "node" -ArgumentList "backend/server.js" -WorkingDirectory "C:\Users\jjuhr\OneDrive\Documents\private_ai" -WindowStyle Hidden
+Stop-ScheduledTask -TaskName "PATTI-Assistant"
+Start-ScheduledTask -TaskName "PATTI-Assistant"
+```
+
+**Known bug, confirmed 2026-08-03 (see BUG-15 in `docs/REVIEW_2026-08-03.md`): this alone is not
+reliable.** `Stop-ScheduledTask` does not actually kill the underlying `node.exe` — the VBS
+wrapper's child process survives it. `Start-ScheduledTask` then launches a *second* `node.exe`
+that immediately crashes with `EADDRINUSE` on port 3000, and the VBS loop keeps retrying every
+5 seconds against the still-alive original process. If this happens, find and kill the stale
+process manually, and the already-running retry loop will pick up cleanly within ~5s:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Select-Object ProcessId, CreationDate, CommandLine
+Stop-Process -Id <the older PID> -Force
+Start-Sleep -Seconds 7
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Select-Object ProcessId, CreationDate
 ```
 
 Verify: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` returns `200`, and the
-log shows `Express Backend running securely on port 3000` with no stderr.
+log shows `Express Backend running securely on port 3000` with no stderr, no `EADDRINUSE`.
 
-### Known gap: no supervision
+### Supervision
 
-**PATTI currently runs as a bare `node` process with nothing supervising it.** It will not
-restart after a crash or a reboot. `patti-cli.js` can register a proper Windows scheduled task
-(`PATTI-Assistant`), and `backend/tools/host_machine_tool.js` already assumes that task exists
-for self-restart — but no such task is registered on this machine, so PATTI's own "restart
-yourself" capability silently falls through to a service-restart path that also does not exist.
-
-Fixing this is worth doing early:
-
-```bash
-node patti-cli.js
-```
-
-Verify with `Get-ScheduledTask -TaskName "PATTI-Assistant"`, then confirm
-`host_machine_tool`'s `restart_service` action actually works end to end.
+A Windows Scheduled Task (`PATTI-Assistant`) is registered and running — `patti-cli.js` set
+this up already; there is no outstanding gap here. It restarts PATTI automatically after a
+crash (`run-background.vbs`'s loop) or a reboot. What's **not** reliable is `host_machine_tool`'s
+`restart_service` action (and the `Stop-ScheduledTask`/`Start-ScheduledTask` pair it runs) — see
+the known bug above. That means PATTI's own "restart yourself" capability can currently leave
+two processes racing for port 3000 rather than cleanly restarting. Fix tracked as BUG-15.
 
 ### Logs
 
@@ -342,10 +354,11 @@ assuming the base file is current.
 - **Never commit secrets.** `.env` is gitignored; `.env.example` documents variables with empty
   values. Scan staged diffs before committing.
 - **The TMDB token in `.env` was pasted into a chat transcript** and should be rotated at TMDB.
-- **Do not regress the test baseline** (73 backend suites / 764 tests, 17 frontend suites / 96
-  tests, as of the Phase 1/2 work landing). If a test fails after a change, determine whether
-  the test encoded old buggy behavior before editing it — and say so explicitly in the commit
-  message when you do.
+- **Do not regress the test baseline** (100 backend suites / 1175 tests, 20 frontend suites /
+  118 tests, as of the `docs/REVIEW_2026-08-03.md` Phase 0/1 security work landing — verified by
+  running both suites directly, not carried over from an earlier note). If a test fails after a
+  change, determine whether the test encoded old buggy behavior before editing it — and say so
+  explicitly in the commit message when you do.
 - **Local-first is not optional.** Any feature that only works with an online provider is a
   regression of the project's core goal.
 - **Mind LLM call budgets.** On this hardware a single local generation takes 30–60 seconds.

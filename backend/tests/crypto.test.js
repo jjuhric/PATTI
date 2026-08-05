@@ -35,4 +35,29 @@ describe('Crypto Utility Tests', () => {
     const decrypted = decrypt(invalidCipher);
     expect(decrypted).toBe(invalidCipher);
   });
+
+  test('DB_ENCRYPTION_SALT changes the derived key - old ciphertext no longer decrypts under a new salt (SEC-9)', () => {
+    const originalSalt = process.env.DB_ENCRYPTION_SALT;
+    try {
+      delete process.env.DB_ENCRYPTION_SALT;
+      jest.resetModules();
+      const defaultSaltCrypto = require('../utils/crypto');
+      const encryptedUnderDefaultSalt = defaultSaltCrypto.encrypt('rotate-me');
+
+      process.env.DB_ENCRYPTION_SALT = 'a-different-random-salt';
+      jest.resetModules();
+      const customSaltCrypto = require('../utils/crypto');
+
+      // Same plaintext, different salt -> different ciphertext.
+      expect(customSaltCrypto.encrypt('rotate-me')).not.toBe(encryptedUnderDefaultSalt);
+      // Ciphertext produced under the old (default) salt does not decrypt correctly once the
+      // salt changes - this is exactly why rotating it requires the migration script, not a
+      // bare env var flip.
+      expect(customSaltCrypto.decrypt(encryptedUnderDefaultSalt)).not.toBe('rotate-me');
+    } finally {
+      if (originalSalt === undefined) delete process.env.DB_ENCRYPTION_SALT;
+      else process.env.DB_ENCRYPTION_SALT = originalSalt;
+      jest.resetModules();
+    }
+  });
 });

@@ -48,6 +48,18 @@ async function handleStartCourse(db, userId, params) {
   if (!topic || typeof topic !== 'string' || !topic.trim()) {
     return 'Error: "topic" parameter is required.';
   }
+
+  // Guard against firing off multiple concurrent multi-lesson generation jobs (each one is
+  // many sequential LLM calls plus document rendering) - only one may run per user at a time.
+  const runningJob = await db.get(
+    "SELECT job_id, topic FROM course_generation_jobs WHERE user_id = ? AND status = 'running'",
+    [userId]
+  );
+  if (runningJob) {
+    return `A course is already being generated ("${runningJob.topic}", job ${runningJob.job_id}). ` +
+      'Wait for it to finish before starting another.';
+  }
+
   const cleanTopic = topic.trim();
   const format = ALLOWED_FORMATS.includes(params.format) ? params.format : DEFAULT_FORMAT;
   const jobId = crypto.randomUUID();

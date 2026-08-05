@@ -7,7 +7,14 @@ if (!process.env.DB_ENCRYPTION_SECRET && !isTest) {
   process.exit(1);
 }
 const secret = process.env.DB_ENCRYPTION_SECRET || 'test_encryption_secret_key_2026';
-const ENCRYPTION_KEY = crypto.scryptSync(secret, 'salt', 32);
+// The salt defaults to the literal string 'salt' for backward compatibility with data already
+// encrypted under it - changing this value changes every derived key, making existing encrypted
+// columns (local/online/gemini API keys, node SSH credentials, weather API key) undecryptable.
+// Set DB_ENCRYPTION_SALT to a random per-install value on a *fresh* install, or run
+// backend/scripts/rotate_encryption_salt.js to migrate an existing database to a new salt.
+// See SEC-9 in docs/REVIEW_2026-08-03.md.
+const salt = process.env.DB_ENCRYPTION_SALT || 'salt';
+const ENCRYPTION_KEY = crypto.scryptSync(secret, salt, 32);
 
 /**
  * Encrypts cleartext into hex format with IV and AuthTag:

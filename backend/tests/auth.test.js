@@ -1,5 +1,6 @@
 const request = require('supertest');
 const express = require('express');
+const jwt = require('jsonwebtoken');
 
 // Mock db.js to use an in-memory database
 let mockTestDb = null;
@@ -26,6 +27,7 @@ jest.mock('../db', () => {
 });
 
 const authRouter = require('../routes/auth');
+const { JWT_SECRET } = require('../middleware/auth');
 const app = express();
 app.use(express.json());
 app.use('/api/auth', authRouter);
@@ -66,6 +68,44 @@ describe('Auth Router Tests', () => {
     const settings = await db.get('SELECT * FROM user_settings WHERE user_id = ?', [user.id]);
     expect(settings).toBeDefined();
     expect(settings.provider).toBe('local');
+  });
+
+  test('POST /api/auth/register - the first account on a fresh instance becomes admin with no invite code', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'owner', password: 'password123' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.isAdmin).toBe(true);
+
+    const db = await mockTestDb;
+    const user = await db.get('SELECT is_admin FROM users WHERE username = ?', ['owner']);
+    expect(user.is_admin).toBe(1);
+  });
+
+  test('POST /api/auth/register - a second account is blocked without a matching invite code', async () => {
+    delete process.env.REGISTRATION_INVITE_CODE;
+
+    await request(app).post('/api/auth/register').send({ username: 'owner', password: 'password123' });
+
+    const noCodeRes = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'second', password: 'password123' });
+    expect(noCodeRes.statusCode).toBe(403);
+
+    process.env.REGISTRATION_INVITE_CODE = 'secret-invite';
+    const wrongCodeRes = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'second', password: 'password123', inviteCode: 'nope' });
+    expect(wrongCodeRes.statusCode).toBe(403);
+
+    const rightCodeRes = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'second', password: 'password123', inviteCode: 'secret-invite' });
+    expect(rightCodeRes.statusCode).toBe(200);
+    expect(rightCodeRes.body.isAdmin).toBe(false);
+
+    delete process.env.REGISTRATION_INVITE_CODE;
   });
 
   test('POST /api/auth/register - validation errors', async () => {
@@ -167,6 +207,49 @@ describe('Auth Router Tests', () => {
       .set('Authorization', 'Bearer invalid_token_here');
     expect(res.statusCode).toBe(403);
     expect(res.body.error).toBe('Session expired or invalid.');
+  });
+
+  test('POST /api/auth/logout-everywhere revokes the token used to call it (SEC-5)', async () => {
+    await request(app).post('/api/auth/register').send({ username: 'revokeuser', password: 'password123' });
+    const loginRes = await request(app).post('/api/auth/login').send({ username: 'revokeuser', password: 'password123' });
+    const token = loginRes.body.token;
+
+    const meBefore = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+    expect(meBefore.statusCode).toBe(200);
+
+    const logoutRes = await request(app).post('/api/auth/logout-everywhere').set('Authorization', `Bearer ${token}`);
+    expect(logoutRes.statusCode).toBe(200);
+    expect(logoutRes.body.success).toBe(true);
+
+    const meAfter = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+    expect(meAfter.statusCode).toBe(401);
+    expect(meAfter.body.error).toBe('Session revoked. Please log in again.');
+  });
+
+  test('POST /api/auth/logout-everywhere requires authentication', async () => {
+    const res = await request(app).post('/api/auth/logout-everywhere');
+    expect(res.statusCode).toBe(401);
+  });
+
+  test('a token issued before tokens_valid_after is rejected; one issued after is accepted (SEC-5)', async () => {
+    const regRes = await request(app).post('/api/auth/register').send({ username: 'cutoffuser', password: 'password123' });
+    const userId = regRes.body.userId;
+
+    const db = await mockTestDb;
+    // Move the cutoff 10 minutes into the future relative to "now" so both tokens below
+    // (with real current-second iat) are unambiguously on one side of it or the other.
+    const futureCutoff = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await db.run('UPDATE users SET tokens_valid_after = ? WHERE id = ?', [futureCutoff, userId]);
+
+    const staleToken = jwt.sign({ id: userId, username: 'cutoffuser' }, JWT_SECRET);
+    const staleRes = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${staleToken}`);
+    expect(staleRes.statusCode).toBe(401);
+    expect(staleRes.body.error).toBe('Session revoked. Please log in again.');
+
+    const freshIat = Math.floor((Date.now() + 20 * 60 * 1000) / 1000); // 20 min from now - past the cutoff
+    const freshToken = jwt.sign({ id: userId, username: 'cutoffuser', iat: freshIat }, JWT_SECRET);
+    const freshRes = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${freshToken}`);
+    expect(freshRes.statusCode).toBe(200);
   });
 
   test('error paths - database failure catches', async () => {

@@ -40,6 +40,8 @@ async function handleWriteFile(params, options = {}) {
       const { qaResult, supervisorResult } = await verifyWriteFileWithQAAndSupervisor(filePath, content, agentName, options.settings);
       
       if (supervisorResult.can_cause_disruptions || !qaResult.approved) {
+        const { createPendingApproval } = require('../utils/pendingApprovals');
+        await createPendingApproval(options, { action: 'write_file', agentName, filePath, fileContent: content });
         return `INPUT_REQUIRED_FROM_USER: [Supervisor Approval Required]
 Agent: ${agentName}
 File: ${filePath}
@@ -52,6 +54,8 @@ This file write could cause disruptions. Do you want to run this? Please reply w
       }
     } catch (err) {
       logger.error(`File verification failed: ${err.message}`);
+      const { createPendingApproval } = require('../utils/pendingApprovals');
+      await createPendingApproval(options, { action: 'write_file', agentName, filePath, fileContent: content });
       return `INPUT_REQUIRED_FROM_USER: [Supervisor Approval Required]
 Agent: ${agentName}
 File: ${filePath}
@@ -145,6 +149,8 @@ async function handleExecuteCommand(params, options = {}) {
       const { qaResult, supervisorResult } = await verifyCommandWithQAAndSupervisor(command, agentName, options.settings);
       
       if (supervisorResult.can_cause_disruptions || !qaResult.approved) {
+        const { createPendingApproval } = require('../utils/pendingApprovals');
+        await createPendingApproval(options, { action: 'execute_command', agentName, command });
         return `INPUT_REQUIRED_FROM_USER: [Supervisor Approval Required]
 Agent: ${agentName}
 Command: ${command}
@@ -156,6 +162,8 @@ This command could cause disruptions. Do you want to run this? Please reply with
       }
     } catch (err) {
       console.error('Verification failed:', err);
+      const { createPendingApproval } = require('../utils/pendingApprovals');
+      await createPendingApproval(options, { action: 'execute_command', agentName, command });
       return `INPUT_REQUIRED_FROM_USER: [Supervisor Approval Required]
 Agent: ${agentName}
 Command: ${command}

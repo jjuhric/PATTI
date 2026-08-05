@@ -724,6 +724,100 @@ describe('Multi-Agent System & Tools Tests', () => {
       global.fetch = globalFetch;
     }, 15000);
 
+    // BUG-9 (docs/REVIEW_2026-08-03.md): runAgentResponse previously retried with no delay at
+    // all, and runSupervisorTurn had no retry whatsoever. Both now mirror runAgentTurn's
+    // backoff pattern - these tests exercise the real ~2s delay end-to-end (same style as the
+    // runAgentTurn retry tests above) rather than mocking timers.
+    test('runAgentResponse retries a transient fetch failure with backoff and succeeds', async () => {
+      const { runAgentResponse } = require('../utils/agents');
+      const globalFetch = global.fetch;
+      let callCount = 0;
+      global.fetch = jest.fn(async () => {
+        callCount++;
+        if (callCount < 2) {
+          throw new Error('fetch failed');
+        }
+        return {
+          ok: true,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ choices: [{ message: { content: JSON.stringify({ status: 'success', summary: 'recovered', data: {} }) } }] })
+        };
+      });
+
+      const result = await runAgentResponse('news_agent', 'system prompt', { provider: 'local', localApiStyle: 'lm-studio', localBaseUrl: 'http://lm-studio' }, 'hello', [], []);
+      expect(JSON.parse(result).summary).toBe('recovered');
+      expect(callCount).toBe(2);
+      global.fetch = globalFetch;
+    }, 15000);
+
+    test('runAgentResponse throws after exhausting its retry on repeated fetch failure', async () => {
+      const { runAgentResponse } = require('../utils/agents');
+      const globalFetch = global.fetch;
+      global.fetch = jest.fn(async () => {
+        throw new Error('fetch failed');
+      });
+
+      await expect(runAgentResponse('news_agent', 'system prompt', { provider: 'local', localApiStyle: 'lm-studio', localBaseUrl: 'http://lm-studio' }, 'hello', [], [])).rejects.toThrow('fetch failed');
+      expect(global.fetch).toHaveBeenCalledTimes(2); // default retriesLeft = 1 -> 2 total attempts
+      global.fetch = globalFetch;
+    }, 15000);
+
+    test('runSupervisorTurn retries a transient fetch failure with backoff and succeeds', async () => {
+      const { runSupervisorTurn } = require('../utils/agents');
+      const globalFetch = global.fetch;
+      let callCount = 0;
+      global.fetch = jest.fn(async () => {
+        callCount++;
+        if (callCount < 2) {
+          throw new Error('fetch failed');
+        }
+        return {
+          ok: true,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ choices: [{ message: { content: JSON.stringify({ next_action: 'delegate_to_news_agent' }) } }] })
+        };
+      });
+
+      const result = await runSupervisorTurn('system prompt', { provider: 'local', localApiStyle: 'lm-studio', localBaseUrl: 'http://lm-studio' }, 'hello');
+      expect(result.next_action).toBe('delegate_to_news_agent');
+      expect(callCount).toBe(2);
+      global.fetch = globalFetch;
+    }, 15000);
+
+    test('runSupervisorTurn throws after exhausting retries on repeated fetch failure (previously had no retry at all)', async () => {
+      const { runSupervisorTurn } = require('../utils/agents');
+      const globalFetch = global.fetch;
+      global.fetch = jest.fn(async () => {
+        throw new Error('fetch failed');
+      });
+
+      await expect(runSupervisorTurn('system prompt', { provider: 'local', localApiStyle: 'lm-studio', localBaseUrl: 'http://lm-studio' }, 'hello')).rejects.toThrow('fetch failed');
+      expect(global.fetch).toHaveBeenCalledTimes(3); // default retriesLeft = 2 -> 3 total attempts
+      global.fetch = globalFetch;
+    }, 15000);
+
+    test('runSupervisorTurn retries on a non-ok LLM response and succeeds', async () => {
+      const { runSupervisorTurn } = require('../utils/agents');
+      const globalFetch = global.fetch;
+      let callCount = 0;
+      global.fetch = jest.fn(async () => {
+        callCount++;
+        if (callCount < 2) {
+          return { ok: false, status: 503, text: async () => 'Service Unavailable' };
+        }
+        return {
+          ok: true,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ choices: [{ message: { content: JSON.stringify({ next_action: 'delegate_to_news_agent' }) } }] })
+        };
+      });
+
+      const result = await runSupervisorTurn('system prompt', { provider: 'local', localApiStyle: 'lm-studio', localBaseUrl: 'http://lm-studio' }, 'hello');
+      expect(result.next_action).toBe('delegate_to_news_agent');
+      expect(callCount).toBe(2);
+      global.fetch = globalFetch;
+    }, 15000);
+
     test('runAgentTurn with gemini provider', async () => {
       const { GoogleGenerativeAI } = require('@google/generative-ai');
       const mockEmbed = {
@@ -999,6 +1093,65 @@ describe('Multi-Agent System & Tools Tests', () => {
           onToolCall: mockToolCall
         });
       }
+
+      global.fetch = globalFetch;
+    });
+
+    // ENH-4 (docs/REVIEW_2026-08-03.md): the subtask_results row for a delegation now carries
+    // the Supervisor's full decision object, not just its thought string.
+    test('runAgentLoop persists the full Supervisor decision object alongside the subtask result', async () => {
+      const mockThought = jest.fn();
+      const mockContent = jest.fn();
+      const globalFetch = global.fetch;
+      let calls = 0;
+      global.fetch = jest.fn().mockImplementation(() => {
+        calls++;
+        if (calls === 1) {
+          return Promise.resolve({
+            ok: true,
+            headers: { get: () => 'application/json' },
+            json: async () => ({ choices: [{ message: { content: JSON.stringify({ thought: 'Need the weather', tool: 'delegate_to_weather_expert', action: 'get', params: { zipcode: '32421' } }) } }] })
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ choices: [{ message: { content: JSON.stringify({ thought: 'Done', tool: 'none' }) } }] })
+        });
+      });
+
+      const dbMock = {
+        all: jest.fn().mockResolvedValue([]),
+        get: jest.fn().mockResolvedValue(null),
+        run: jest.fn().mockResolvedValue({ lastID: 1 })
+      };
+
+      await runAgentLoop({
+        db: dbMock,
+        userId: 1,
+        chatId: 1,
+        provider: 'openai',
+        modelName: 'gpt-4',
+        userMessage: 'What is the weather?',
+        history: [],
+        onThought: mockThought,
+        onContent: mockContent,
+        onToolCall: jest.fn(),
+        onAgentStatus: jest.fn()
+      });
+
+      const subtaskInsertCall = dbMock.run.mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO subtask_results')
+      );
+      expect(subtaskInsertCall).toBeDefined();
+      const [, params] = subtaskInsertCall;
+      const decisionJson = params[params.length - 1];
+      expect(JSON.parse(decisionJson)).toEqual({
+        thought: 'Need the weather',
+        tool: 'delegate_to_weather_expert',
+        action: 'get',
+        params: { zipcode: '32421' }
+      });
 
       global.fetch = globalFetch;
     });

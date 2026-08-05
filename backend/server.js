@@ -26,6 +26,7 @@ const memoryRouter = require('./routes/memory');
 const vaultRouter = require('./routes/vault');
 const hostRouter = require('./routes/host');
 const agentBridgeRouter = require('./routes/agent_bridge');
+const agentsRouter = require('./routes/agents');
 const nodesRouter = require('./routes/nodes');
 const tokenUsageRouter = require('./routes/token_usage');
 const searchUsageRouter = require('./routes/search_usage');
@@ -39,18 +40,42 @@ const attachmentsRouter = require('./routes/attachments');
 const adminRouter = require('./routes/admin');
 const otaRouter = require('./routes/ota');
 const mqttService = require('./services/mqtt_service');
+const { isValidHeartbeatPayload } = require('./utils/mqttHeartbeatValidation');
 
 const helmet = require('helmet');
 
 const app = express();
 app.use(helmet({
-  contentSecurityPolicy: false, // Bypass CSP issues for embedded UI controls / dev setups
+  // SEC-6 (docs/REVIEW_2026-08-03.md): report-only for now, not enforced. A blind enforced
+  // policy risks breaking the live app (embedded terminal WebSocket, SSE streams, the
+  // inline-style-heavy UI) in ways that can't be fully verified without clicking through every
+  // feature under a real session first. Report-only is non-breaking by construction - it only
+  // logs violations to the browser console - so this is a safe first step toward eventually
+  // enforcing a real policy once those violations have been reviewed.
+  contentSecurityPolicy: {
+    reportOnly: true,
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      connectSrc: ["'self'", 'ws:', 'wss:'],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      frameAncestors: ["'self'"]
+    }
+  }
 }));
 const PORT = process.env.PORT || 3000;
 
-// Helper to check if origin is a local private network subnet
+// Helper to check if origin is a local private network subnet, on a port PATTI actually
+// serves from - a bare private-IP match with an unrestricted port would trust any device
+// listening on any port of the home LAN, not just this app. See SEC-10 in
+// docs/REVIEW_2026-08-03.md. (Real CSRF protection still comes from using Bearer-token auth
+// rather than cookies - this narrows the trusted-origin surface as defense in depth.)
 const isLocalOrigin = (origin) => {
-  const localRegex = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+|[a-zA-Z0-9-]+\.local)(:\d+)?$/;
+  const localRegex = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+|[a-zA-Z0-9-]+\.local)(:(3000|5173))?$/;
   return localRegex.test(origin);
 };
 
@@ -81,6 +106,11 @@ app.use(express.json({
 
 // Initialize database connection and schedule daily memory maintenance
 const logger = require('./utils/logger');
+
+if (!process.env.MQTT_USERNAME || !process.env.MQTT_PASSWORD) {
+  logger.warn('[MQTT] No MQTT_USERNAME/MQTT_PASSWORD configured - the broker is trusting any device on the network that can reach it. Consider enabling broker-level auth (e.g. a Mosquitto password file) if the LAN isn\'t fully trusted. See SEC-7 in docs/REVIEW_2026-08-03.md.');
+}
+
 getDb().then(async (db) => {
   logger.info('Database initialized successfully.');
   try {
@@ -93,8 +123,11 @@ getDb().then(async (db) => {
 
     mqttService.subscribe('nodes/heartbeat', async (payload) => {
       try {
-        if (!payload || !payload.nodeId) return;
-        
+        if (!isValidHeartbeatPayload(payload)) {
+          logger.warn(`[MQTT] Ignored malformed heartbeat payload: ${JSON.stringify(payload)}`);
+          return;
+        }
+
         const deviceType = payload.device_type || 'unknown';
         const ipAddress = payload.ip_address || 'unknown';
         const port = payload.port || 3000;
@@ -137,9 +170,6 @@ getDb().then(async (db) => {
     }, 24 * 60 * 60 * 1000);
     // Start automatic check daemon
     if (process.env.NODE_ENV !== 'test') {
-      const googleNestDiscovery = require('./services/google_nest_discovery');
-      googleNestDiscovery.startGoogleNestDiscovery();
-
       const nodeHealthService = require('./services/node_health_service');
       nodeHealthService.startDaemon();
 
@@ -174,6 +204,7 @@ app.use('/api/memories', memoryRouter);
 app.use('/api/vault', vaultRouter);
 app.use('/api/host', hostRouter);
 app.use('/api/bridge', agentBridgeRouter);
+app.use('/api/agents', agentsRouter);
 app.use('/api/agent-bridge', agentBridgeRouter);
 app.use('/api/nodes', nodesRouter);
 app.use('/api/personalities-skills', personalitiesSkillsRouter);

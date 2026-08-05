@@ -65,6 +65,15 @@ async function runAgentLoop({
   // Filter history to ensure it starts with a user message
   const firstUserIdx = (history || []).findIndex(msg => msg.role === 'user');
   let cleanedHistory = firstUserIdx !== -1 ? history.slice(firstUserIdx) : [];
+  // BUG-8 (docs/REVIEW_2026-08-03.md): intentional, confirmed with the project owner rather
+  // than changed unilaterally - cleanedHistory (what actually reaches the final LLM call) is
+  // wiped to [] in production so the Supervisor/worker loop treats each turn independently and
+  // the prior conversation can't blow out the local model's context window. This does mean
+  // routes/chat.js's work fetching/merging up to 20 prior messages only matters under test;
+  // multi-turn continuity in production instead relies entirely on the 24h short-term-memory
+  // system and rawRecentHistory below (used only for approval/rejection continuation, not
+  // general follow-ups). If genuine "what about the second one?"-style follow-up continuity is
+  // wanted later, restoring a bounded/summarized cleanedHistory here is the place to do it.
   if (process.env.NODE_ENV !== 'test') {
     cleanedHistory = [];
   }
@@ -164,7 +173,13 @@ async function runAgentLoop({
           if (parsed.success) {
             success = true;
           }
-        } catch (e) {}
+        } catch (e) {
+          // BUG-12 (docs/REVIEW_2026-08-03.md): toolOutput is usually a markdown string, not
+          // JSON - this is the expected/common case, not a real failure, so `success` just
+          // stays false. Logged at debug level so a genuinely unexpected parse issue is still
+          // traceable without being noisy at normal log levels.
+          console.debug('[Speak Text Intercept] toolOutput was not JSON (expected for most outputs):', e.message);
+        }
 
         if (success) {
           onThought("Speak text completed successfully.\n");
@@ -261,7 +276,10 @@ async function runAgentLoop({
         if (parsed.success) {
           success = true;
         }
-      } catch (e) {}
+      } catch (e) {
+        // BUG-12: same expected-non-JSON case as the other speak_text intercept above.
+        console.debug('[Speak Text Intercept] toolOutput was not JSON (expected for most outputs):', e.message);
+      }
 
       if (success) {
         onThought("Speak text completed successfully.\n");
@@ -347,7 +365,11 @@ async function runAgentLoop({
       if (parsed.success) {
         success = true;
       }
-    } catch (e) {}
+    } catch (e) {
+      // BUG-12: toolOutput is usually a markdown string, not JSON - expected/common, not a
+      // real failure, so `success` just stays false.
+      console.debug('[Google Assistant Intercept] toolOutput was not JSON (expected for most outputs):', e.message);
+    }
 
     if (success) {
       onThought("Command succeeded. Programmatically responding 'Action Complete' to the user...\n");
@@ -667,7 +689,12 @@ ${profileDetailsText ? `Here is the user profile details context:\n${profileDeta
   const taskResultToolContext = `\n\n### Task Result Lookup Tool (Optional Verification):
 - Delegated results appear in History Context only as a short preview tagged with a row id, e.g. "[news_agent] completed (id=42) - ...". You normally don't need more than the preview. Only if you genuinely need to re-examine a specific result's full text before deciding your next step, call {"tool": "task_result", "action": "read", "params": {"id": 42}}. The full text is always available to the Communication Specialist for the final answer regardless of whether you read it here.`;
 
-  let systemPrompt = AGENT_PROMPTS.supervisor + feedbackContext + activeSkillsPrompt + `\n\n${profileContext}\n\n### User Memories Context:\n${memoriesResult}${dynamicCapabilitiesContext}${workspaceContext}${taskResultToolContext}`;
+  // ENH-3 (docs/REVIEW_2026-08-03.md): captured once so every turn below reuses the exact same
+  // string instead of re-invoking the AGENT_PROMPTS proxy (which re-reads customization files
+  // from disk on every access) - also guarantees systemPrompt.startsWith(supervisorBasePrompt)
+  // holds for the prompt-caching split, rather than relying on two separate accesses agreeing.
+  const supervisorBasePrompt = AGENT_PROMPTS.supervisor;
+  let systemPrompt = supervisorBasePrompt + feedbackContext + activeSkillsPrompt + `\n\n${profileContext}\n\n### User Memories Context:\n${memoriesResult}${dynamicCapabilitiesContext}${workspaceContext}${taskResultToolContext}`;
   let currentHistory = [...cleanedHistory];
   let accumulatedToolOutputs = [];
   let toolCallsCount = 0;
@@ -685,107 +712,84 @@ ${profileDetailsText ? `Here is the user profile details context:\n${profileDeta
   const lastAssistantMsg = [...rawRecentHistory].reverse().find(msg => msg.role === 'assistant');
   let customSystemPromptContext = '';
 
-  if (lastAssistantMsg) {
-    if (lastAssistantMsg.content.includes('[Supervisor Approval Required]')) {
-      // Parse agent, command, file and content
-      let parsedAgent = null;
-      let parsedCommand = null;
-      let parsedFile = null;
-      let parsedContent = null;
+  // SEC-3 (docs/REVIEW_2026-08-03.md): whether something actually executes is gated on a
+  // genuine pending_approvals row created by the real verification code path in
+  // coder_tools.js, never on re-parsing the displayed assistant message - free text the model
+  // itself produced, and which manipulated content ingested earlier in the conversation could
+  // in principle influence. The user's plain "yes"/"no" reply is still all that's needed; only
+  // WHAT gets executed is now bound to server state instead of chat text.
+  const { getPendingApproval, resolvePendingApproval } = require('../utils/pendingApprovals');
+  const pendingApproval = await getPendingApproval(db, userId, chatId);
 
-      const agentIndex = lastAssistantMsg.content.indexOf('Agent:');
-      const commandIndex = lastAssistantMsg.content.indexOf('Command:');
-      const fileIndex = lastAssistantMsg.content.indexOf('File:');
-      const contentIndex = lastAssistantMsg.content.indexOf('Content:');
-      const qaIndex = lastAssistantMsg.content.indexOf('QA Analysis:');
-      const errorIndex = lastAssistantMsg.content.indexOf('Error:');
+  if (pendingApproval) {
+    const reply = userMessage.trim().toLowerCase();
+    if (reply.startsWith('1') || reply === 'yes' || reply.includes('approve') || reply.includes('go ahead') || reply.includes('ok')) {
+      const { handleCoderTool } = require('../tools/coder_tools');
+      let toolOutput = '';
 
-      if (agentIndex !== -1) {
-        if (commandIndex !== -1) {
-          const endCommandIndex = qaIndex !== -1 ? qaIndex : (errorIndex !== -1 ? errorIndex : lastAssistantMsg.content.indexOf('This command could cause'));
-          if (endCommandIndex !== -1 && endCommandIndex > commandIndex) {
-            parsedAgent = lastAssistantMsg.content.substring(agentIndex + 6, commandIndex).trim();
-            parsedCommand = lastAssistantMsg.content.substring(commandIndex + 8, endCommandIndex).trim();
-          }
-        } else if (fileIndex !== -1) {
-          const endFileIndex = contentIndex !== -1 ? contentIndex : (qaIndex !== -1 ? qaIndex : lastAssistantMsg.content.indexOf('This file write could cause'));
-          if (endFileIndex !== -1 && endFileIndex > fileIndex) {
-            parsedAgent = lastAssistantMsg.content.substring(agentIndex + 6, fileIndex).trim();
-            parsedFile = lastAssistantMsg.content.substring(fileIndex + 5, endFileIndex).trim();
-            if (contentIndex !== -1) {
-              const endContentIndex = qaIndex !== -1 ? qaIndex : (errorIndex !== -1 ? errorIndex : lastAssistantMsg.content.indexOf('This file write could cause'));
-              parsedContent = lastAssistantMsg.content.substring(contentIndex + 8, endContentIndex).trim();
-            }
-          }
+      if (pendingApproval.action === 'execute_command') {
+        onThought(`User approved the command: "${pendingApproval.command}". Executing...\n`);
+        try {
+          toolOutput = await handleCoderTool('execute_command', { command: pendingApproval.command }, {
+            userId,
+            settings,
+            skipVerification: true,
+            agentName: pendingApproval.agent_name
+          });
+        } catch (err) {
+          toolOutput = `Error running command: ${err.message}`;
+        }
+      } else if (pendingApproval.action === 'write_file') {
+        onThought(`User approved writing to file: "${pendingApproval.file_path}". Executing...\n`);
+        try {
+          toolOutput = await handleCoderTool('write_file', { filePath: pendingApproval.file_path, content: pendingApproval.file_content }, {
+            userId,
+            settings,
+            skipVerification: true,
+            agentName: pendingApproval.agent_name
+          });
+        } catch (err) {
+          toolOutput = `Error writing file: ${err.message}`;
         }
       }
 
-      if (parsedAgent && (parsedCommand || parsedFile)) {
-        const reply = userMessage.trim().toLowerCase();
-        if (reply.startsWith('1') || reply === 'yes' || reply.includes('approve') || reply.includes('go ahead') || reply.includes('ok')) {
-          const { handleCoderTool } = require('../tools/coder_tools');
-          let toolOutput = '';
+      await resolvePendingApproval(db, pendingApproval.id, 'approved');
 
-          if (parsedCommand) {
-            onThought(`User approved the command: "${parsedCommand}". Executing...\n`);
-            try {
-              toolOutput = await handleCoderTool('execute_command', { command: parsedCommand }, {
-                userId,
-                settings,
-                skipVerification: true,
-                agentName: parsedAgent
-              });
-            } catch (err) {
-              toolOutput = `Error running command: ${err.message}`;
-            }
-          } else if (parsedFile) {
-            onThought(`User approved writing to file: "${parsedFile}". Executing...\n`);
-            try {
-              toolOutput = await handleCoderTool('write_file', { filePath: parsedFile, content: parsedContent }, {
-                userId,
-                settings,
-                skipVerification: true,
-                agentName: parsedAgent
-              });
-            } catch (err) {
-              toolOutput = `Error writing file: ${err.message}`;
-            }
-          }
+      accumulatedToolOutputs.push({
+        tool: `delegate_to_${pendingApproval.agent_name}`,
+        output: toolOutput
+      });
 
-          accumulatedToolOutputs.push({
-            tool: `delegate_to_${parsedAgent}`,
-            output: toolOutput
-          });
+      currentHistory.push({
+        role: 'assistant',
+        content: lastAssistantMsg ? lastAssistantMsg.content : ''
+      });
+      currentHistory.push({
+        role: 'user',
+        content: userMessage
+      });
+      currentHistory.push({
+        role: 'user',
+        content: pendingApproval.action === 'execute_command' ? `[Output for execute_command]:\n${toolOutput}` : `[Output for write_file]:\n${toolOutput}`
+      });
 
-          currentHistory.push({
-            role: 'assistant',
-            content: lastAssistantMsg.content
-          });
-          currentHistory.push({
-            role: 'user',
-            content: userMessage
-          });
-          currentHistory.push({
-            role: 'user',
-            content: parsedCommand ? `[Output for execute_command]:\n${toolOutput}` : `[Output for write_file]:\n${toolOutput}`
-          });
+      toolCallsCount = 1; // Mark that we did 1 tool call turn already
+    } else if (reply.startsWith('2') || reply === 'no' || reply.includes('reject') || reply.includes('refuse')) {
+      await resolvePendingApproval(db, pendingApproval.id, 'rejected');
 
-          toolCallsCount = 1; // Mark that we did 1 tool call turn already
-        } else if (reply.startsWith('2') || reply === 'no' || reply.includes('reject') || reply.includes('refuse')) {
-          onThought("User rejected running the command/file write. Asking why...\n");
-          const promptMsg = "Why did you choose not to go forward with this code?";
-          onContent(promptMsg);
+      onThought("User rejected running the command/file write. Asking why...\n");
+      const promptMsg = "Why did you choose not to go forward with this code?";
+      onContent(promptMsg);
 
-          if (db && typeof db.run === 'function' && chatId) {
-            await db.run(
-              'INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)',
-              [chatId, 'assistant', promptMsg]
-            ).catch(err => console.error('Failed to save rejection prompt to database:', err));
-          }
-          return;
-        }
+      if (db && typeof db.run === 'function' && chatId) {
+        await db.run(
+          'INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)',
+          [chatId, 'assistant', promptMsg]
+        ).catch(err => console.error('Failed to save rejection prompt to database:', err));
       }
-    } else if (lastAssistantMsg.content.includes('Why did you choose not to go forward with this code?')) {
+      return;
+    }
+  } else if (lastAssistantMsg && lastAssistantMsg.content.includes('Why did you choose not to go forward with this code?')) {
       // The user is responding with their reason for rejection.
       // Find the original proposal in history.
       const originalProposal = [...rawRecentHistory].reverse().find(msg => msg.role === 'assistant' && msg.content.includes('[Supervisor Approval Required]'));
@@ -818,7 +822,6 @@ ${profileDetailsText ? `Here is the user profile details context:\n${profileDeta
 ${rejectedCommandInfo}The user chose not to run the code/command and provided this reason: "${userMessage}".
 Please evaluate their reason. If changes to the code or command are required based on their feedback, make those changes (e.g. call the coder/developer agent to edit the files, or adjust the command) and ask for approval again (which will undergo QA and Supervisor review again).
 If no changes are required and you can proceed without executing the code, then continue.`;
-    }
   }
 
   if (customSystemPromptContext) {
@@ -942,7 +945,13 @@ If no changes are required and you can proceed without executing the code, then 
     try {
       const supervisorSettings = {
         ...settings,
-        modelName: supervisorModel || settings.modelName
+        modelName: supervisorModel || settings.modelName,
+        // ENH-3 (docs/REVIEW_2026-08-03.md): systemPrompt is re-sent verbatim on every one of
+        // up to maxToolCalls turns within this single request - AGENT_PROMPTS.supervisor is the
+        // static leading portion (before the per-turn feedback/skills/memories/context that
+        // follows it), so it's the piece worth marking cacheable. No-op for every non-Anthropic
+        // target; buildAnthropicSystem falls back to the plain uncached string otherwise.
+        cacheableSystemPrefix: supervisorBasePrompt
       };
       let supervisorInput;
       if (process.env.NODE_ENV === 'test') {
@@ -1142,7 +1151,13 @@ If no changes are required and you can proceed without executing the code, then 
             message: `Agent "${agentName}" encountered an execution error: ${err.message}`,
             timestamp: new Date().toISOString()
           });
-        } catch (alertErr) { }
+        } catch (alertErr) {
+          // BUG-12: best-effort monitor-dashboard notification - the underlying delegation
+          // failure is already handled/surfaced below regardless of whether this alert went
+          // out, so a broken alert bus shouldn't fail the request. Logged so a persistently
+          // broken alert bus isn't invisible.
+          console.debug('[Delegation Failure Alert] Failed to broadcast alert:', alertErr.message);
+        }
 
         if (agentName === 'system_specialist') {
           toolOutput = JSON.stringify({
@@ -1175,7 +1190,12 @@ If no changes are required and you can proceed without executing the code, then 
             const parsed = JSON.parse(toolOutput);
             if (parsed.data?.error) errMsg = parsed.data.error;
             else if (parsed.summary) errMsg = parsed.summary;
-          } catch (e) { }
+          } catch (e) {
+            // BUG-12: toolOutput isn't always JSON (the plain-string delegation-failed message
+            // built above, for one) - errMsg already defaults to the raw toolOutput, so this is
+            // an expected fallback, not a real failure.
+            console.debug('[Delegation Failure] toolOutput was not JSON, using raw text as the error message:', e.message);
+          }
 
           onThought(`Sub-agent delegation failure detected in "${agentName}": ${errMsg}. Continuing with remaining parts of the request.\n`);
 
@@ -1186,7 +1206,10 @@ If no changes are required and you can proceed without executing the code, then 
               message: `Agentic execution failure in "${agentName}": ${errMsg}`,
               timestamp: new Date().toISOString()
             });
-          } catch (alertErr) { }
+          } catch (alertErr) {
+            // BUG-12: same best-effort monitor-dashboard notification as above.
+            console.debug('[Delegation Failure Alert] Failed to broadcast alert:', alertErr.message);
+          }
         }
       }
 
@@ -1274,10 +1297,18 @@ If no changes are required and you can proceed without executing the code, then 
     // reassembled from the DB once, at final synthesis time (see dataBlock below).
     const isErrorResult = fullToolOutput.includes('"status":"error"') || fullToolOutput.includes('delegation failed') || fullToolOutput.startsWith('Error:');
     let subtaskRowId = null;
+    let decisionJson = null;
+    try {
+      // ENH-4: the full decision (thought/tool/action/params), not just the thought string -
+      // best-effort, never lets a non-serializable params value break the actual delegation.
+      decisionJson = JSON.stringify({ thought: decision.thought, tool: decision.tool, action: decision.action, params: decision.params });
+    } catch (jsonErr) {
+      console.debug('[Subtask Decision] Failed to serialize decision object:', jsonErr.message);
+    }
     try {
       const insertResult = await db.run(
-        'INSERT INTO subtask_results (chat_id, request_id, agent_name, task_label, result_text, status) VALUES (?, ?, ?, ?, ?, ?)',
-        [chatId, requestId, delegatedAgentName || decision.tool, taskLabelForStore || decision.action || decision.tool, fullToolOutput, isErrorResult ? 'error' : 'done']
+        'INSERT INTO subtask_results (chat_id, request_id, agent_name, task_label, result_text, status, decision_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [chatId, requestId, delegatedAgentName || decision.tool, taskLabelForStore || decision.action || decision.tool, fullToolOutput, isErrorResult ? 'error' : 'done', decisionJson]
       );
       subtaskRowId = insertResult && insertResult.lastID;
     } catch (dbErr) {

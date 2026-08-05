@@ -20,7 +20,7 @@ async function handleUserFeedback(db, userId, chatId, userMessage) {
   try {
     // 1. Fetch previous messages to understand context
     const history = await db.all(
-      'SELECT id, role, content FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 5',
+      'SELECT id, role, content, agents_used FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 5',
       [chatId]
     );
     if (!history || history.length < 2) return; // Need at least some history
@@ -31,18 +31,28 @@ async function handleUserFeedback(db, userId, chatId, userMessage) {
 
     if (!previousUserMsg) return;
 
+    // BUG-13 (docs/REVIEW_2026-08-03.md): which worker agent(s), if any, the previous turn
+    // actually delegated to - captured live in routes/chat.js since subtask_results (the
+    // richer per-subtask record) is wiped at the end of every turn as scratchpad cleanup.
+    let agentsUsed = [];
+    if (lastAssistantMsg && lastAssistantMsg.agents_used) {
+      try {
+        agentsUsed = JSON.parse(lastAssistantMsg.agents_used);
+      } catch (e) {
+        agentsUsed = [];
+      }
+    }
+
     const lowerMessage = userMessage.toLowerCase();
 
     // 2. Positive Reinforcement Detection
     const positiveKeywords = /\b(good|perfect|great|awesome|excellent|amazing|works)\b/i;
     if (positiveKeywords.test(userMessage)) {
-      // Find what agent or tool sequence was recently used.
-      // We can check assistant response or tool logs.
-      // For now, let's extract a generic success log for the user's previous query
       console.log(`[Feedback System] Positive reinforcement detected: "${userMessage}"`);
       await storeLearnedBehavior(previousUserMsg.content, {
         type: 'success',
         userPrompt: previousUserMsg.content,
+        agentsUsed,
         feedback: userMessage,
         timestamp: new Date().toISOString()
       });
@@ -68,6 +78,9 @@ async function handleUserFeedback(db, userId, chatId, userMessage) {
         await storeLearnedBehavior(previousUserMsg.content, {
           type: 'correction',
           correctAgent: matchedAgent,
+          // What actually ran and got corrected away from, when known - lets a future
+          // read of this record distinguish "wrong agent used" from "right agent, bad output".
+          agentsUsed,
           userPrompt: previousUserMsg.content,
           feedback: userMessage,
           timestamp: new Date().toISOString()
@@ -94,7 +107,15 @@ async function getInjectedContext(queryText) {
       if (meta.type === 'correction' && meta.correctAgent) {
         context += `- For queries similar to "${meta.userPrompt}", you MUST delegate directly to the **${meta.correctAgent}** sub-agent.\n`;
       } else if (meta.type === 'success') {
-        context += `- Successful past workflow for similar query "${meta.userPrompt}": Repeat the successful sequence of actions.\n`;
+        // BUG-13: only claim a specific repeatable agent sequence when we actually know it -
+        // an empty/missing agentsUsed means the turn never delegated to a worker agent at all
+        // (e.g. communication_specialist answered directly), so say that plainly instead of
+        // pointing at a "successful sequence" that doesn't exist.
+        if (meta.agentsUsed && meta.agentsUsed.length > 0) {
+          context += `- Successful past workflow for similar query "${meta.userPrompt}": delegate to **${meta.agentsUsed.join(', ')}**, which worked well last time.\n`;
+        } else {
+          context += `- Successful past workflow for similar query "${meta.userPrompt}": answered directly with no sub-agent delegation, and that worked well.\n`;
+        }
       }
     });
 
