@@ -66,7 +66,12 @@ export default function MemoryPane({ memories, onAddMemory, onDeleteMemory }) {
           </div>
         </div>
 
-        <div className="memory-layout" style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '24px' }}>
+        {/* FEAT-8 (docs/REVIEW_2026-08-03.md): the .memory-layout CSS class already defines a
+            responsive 768px breakpoint (index.css) - this used to also carry a duplicate inline
+            style with the same fixed-width values, which fought the CSS class and forced it to
+            resort to !important to win on narrow viewports. Removed; the class alone is
+            sufficient. */}
+        <div className="memory-layout">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             {/* Long-term Memories */}
             <div style={{

@@ -17,12 +17,14 @@ import SudoModal from './components/SudoModal';
 import PopoutWindow from './components/PopoutWindow';
 import CustomAlertModal from './components/CustomAlertModal';
 import Esp32MessageModal from './components/Esp32MessageModal';
+import { useApi } from './hooks/useApi';
 
 
 
 function App() {
   // Auth state
   const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const api = useApi(token);
   const [user, setUser] = useState(null);
   const [isLogin, setIsLogin] = useState(true);
   const [authError, setAuthError] = useState('');
@@ -191,14 +193,8 @@ function App() {
   // Sync active tab globally on startup/token load
   useEffect(() => {
     if (token) {
-      fetch('/api/settings/active-tab', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ tab: activeTab })
-      }).catch(err => console.error('[Active Tab Startup Sync] Failed:', err));
+      api.post('/api/settings/active-tab', { tab: activeTab })
+        .then(({ ok, error }) => { if (!ok) console.error('[Active Tab Startup Sync] Failed:', error); });
     }
   }, [token]);
 
@@ -293,17 +289,12 @@ function App() {
 
   useEffect(() => {
     const fetchVersion = async () => {
-      try {
-        const res = await fetch('/api/version');
-        if (res.ok) {
-          const data = await res.json();
-          setAppVersion(data.version);
-          if (Array.isArray(data.host_ips)) {
-            setHostIps(data.host_ips);
-          }
+      const { ok, data } = await api.get('/api/version');
+      if (ok) {
+        setAppVersion(data.version);
+        if (Array.isArray(data.host_ips)) {
+          setHostIps(data.host_ips);
         }
-      } catch (err) {
-        console.error(err);
       }
     };
     fetchVersion();
@@ -317,27 +308,18 @@ function App() {
     if (!token) return;
 
     const fetchHeaderStats = async () => {
-      try {
-        const tokenRes = await fetch(`/api/token-usage?since=${encodeURIComponent(sessionStartRef.current)}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (tokenRes.ok) {
-          const data = await tokenRes.json();
-          setSessionTokens(data.totalTokens || 0);
-        }
-      } catch (err) {
-        console.error('Failed to fetch session token usage:', err);
+      const { ok: tokenOk, data: tokenData, error: tokenErr } = await api.get(`/api/token-usage?since=${encodeURIComponent(sessionStartRef.current)}`);
+      if (tokenOk) {
+        setSessionTokens(tokenData.totalTokens || 0);
+      } else {
+        console.error('Failed to fetch session token usage:', tokenErr);
       }
 
-      try {
-        const searchRes = await fetch('/api/search-usage', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (searchRes.ok) {
-          setSearchUsage(await searchRes.json());
-        }
-      } catch (err) {
-        console.error('Failed to fetch search usage:', err);
+      const { ok: searchOk, data: searchData, error: searchErr } = await api.get('/api/search-usage');
+      if (searchOk) {
+        setSearchUsage(searchData);
+      } else {
+        console.error('Failed to fetch search usage:', searchErr);
       }
     };
 
@@ -361,16 +343,10 @@ function App() {
     if (!token || isStreaming) return;
     let cancelled = false;
     const checkLlmStatus = async () => {
-      try {
-        const res = await fetch('/api/chat/llm-status', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
-        if (!cancelled) setLlmBusy(!!data.busy);
-      } catch (err) {
-        // Fail open - don't block the UI if the status check itself fails
-      }
+      // Fail open - don't block the UI if the status check itself fails.
+      const { ok, data } = await api.get('/api/chat/llm-status');
+      if (!ok || cancelled) return;
+      setLlmBusy(!!data.busy);
     };
     checkLlmStatus();
     const interval = setInterval(checkLlmStatus, 5000);
@@ -380,18 +356,11 @@ function App() {
 
   // Auth operations
   const fetchUserProfile = async () => {
-    try {
-      const res = await fetch('/api/auth/me', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data.user);
-      } else {
-        handleLogout();
-      }
-    } catch (err) {
-      console.error(err);
+    const { ok, data } = await api.get('/api/auth/me');
+    if (ok) {
+      setUser(data.user);
+    } else {
+      handleLogout();
     }
   };
 
@@ -399,25 +368,17 @@ function App() {
     e.preventDefault();
     setAuthError('');
     const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(authForm)
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed');
-      }
-      if (isLogin) {
-        setToken(data.token);
-      } else {
-        setIsLogin(true);
-        setAuthForm({ username: '', password: '' });
-        alert('Registration successful! Please log in.');
-      }
-    } catch (err) {
-      setAuthError(err.message);
+    const { ok, data, error } = await api.post(endpoint, authForm);
+    if (!ok) {
+      setAuthError(error || 'Authentication failed');
+      return;
+    }
+    if (isLogin) {
+      setToken(data.token);
+    } else {
+      setIsLogin(true);
+      setAuthForm({ username: '', password: '' });
+      alert('Registration successful! Please log in.');
     }
   };
 
@@ -427,83 +388,66 @@ function App() {
     setIsChatPoppedOut(false);
   };
 
+  // SEC-5: revokes every currently-issued token for this account (this device included), then
+  // logs this device out locally too - the right response to "I think my token leaked."
+  const handleLogoutEverywhere = async () => {
+    const { ok, error } = await api.post('/api/auth/logout-everywhere');
+    if (!ok) console.error('Failed to revoke sessions:', error);
+    handleLogout();
+  };
+
   // Nodes operations
   const fetchNodes = async () => {
-    try {
-      const res = await fetch('/api/nodes', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setNodes(data);
-      }
-    } catch (err) {
-      console.error('Failed to fetch nodes:', err);
+    const { ok, data, error } = await api.get('/api/nodes');
+    if (ok) {
+      setNodes(data);
+    } else {
+      console.error('Failed to fetch nodes:', error);
     }
   };
 
-  const handleDeleteNode = async (id) => {
-    try {
-      const res = await fetch(`/api/nodes/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        showToast('Node deleted successfully', 'success');
-        fetchNodes();
-      } else {
-        const data = await res.json();
-        showToast(data.error || 'Failed to delete node', 'error');
+  // BUG-7: standardized confirmation - previously deleted immediately with no confirm at all.
+  const handleDeleteNode = (id) => {
+    setPopupConfirm({
+      type: 'confirm',
+      title: 'PATTI',
+      message: 'Delete this device? This cannot be undone.',
+      onConfirm: async () => {
+        const { ok, error } = await api.delete(`/api/nodes/${id}`);
+        if (ok) {
+          showToast('Node deleted successfully', 'success');
+          fetchNodes();
+        } else {
+          showToast(error || 'Failed to delete node', 'error');
+        }
       }
-    } catch (err) {
-      console.error(err);
-      showToast('Error deleting node', 'error');
-    }
+    });
   };
 
   // Chats operations
   const createChat = async () => {
-    try {
-      const res = await fetch('/api/chats', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ title: `Chat ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}` })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setChats(prev => [data, ...prev]);
-        setActiveChatId(data.chatId);
-        handleTabChange('chat');
-        setIsMobileSidebarOpen(false);
-      }
-    } catch (err) {
-      console.error(err);
+    const { ok, data } = await api.post('/api/chats', { title: `Chat ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}` });
+    if (ok) {
+      setChats(prev => [data, ...prev]);
+      setActiveChatId(data.chatId);
+      handleTabChange('chat');
+      setIsMobileSidebarOpen(false);
     }
   };
 
   const fetchChats = async () => {
-    try {
-      const res = await fetch('/api/chats', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setChats(data);
-        
-        if (hasInitializedRef.current) return;
-        hasInitializedRef.current = true;
-        
-        if (data.length > 0) {
-          // Load the last active chat
-          setActiveChatId(data[0].id);
-          setActiveTab('chat');
-        }
+    const { ok, data } = await api.get('/api/chats');
+    if (ok) {
+      setChats(data);
+
+      if (hasInitializedRef.current) return;
+      hasInitializedRef.current = true;
+
+      if (data.length > 0) {
+        // Load the last active chat
+        setActiveChatId(data[0].id);
+        setActiveTab('chat');
       }
-    } catch (err) {
-      console.error(err);
     }
   };
 
@@ -523,19 +467,12 @@ function App() {
       title: 'PATTI',
       message: 'Delete this chat room?',
       onConfirm: async () => {
-        try {
-          const res = await fetch(`/api/chats/${id}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (res.ok) {
-            setChats(prev => prev.filter(c => c.id !== id));
-            if (activeChatId === id) {
-              setActiveChatId(null);
-            }
+        const { ok } = await api.delete(`/api/chats/${id}`);
+        if (ok) {
+          setChats(prev => prev.filter(c => c.id !== id));
+          if (activeChatId === id) {
+            setActiveChatId(null);
           }
-        } catch (err) {
-          console.error(err);
         }
       }
     });
@@ -543,115 +480,70 @@ function App() {
 
   const handleRenameChat = async (id, newTitle) => {
     if (!newTitle.trim()) return;
-    try {
-      const res = await fetch(`/api/chats/${id}`, {
-        method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ title: newTitle })
-      });
-      if (res.ok) {
-        setChats(prev => prev.map(c => c.id === id ? { ...c, title: newTitle } : c));
-        setEditingChatId(null);
-      }
-    } catch (err) {
-      console.error(err);
+    const { ok } = await api.put(`/api/chats/${id}`, { title: newTitle });
+    if (ok) {
+      setChats(prev => prev.map(c => c.id === id ? { ...c, title: newTitle } : c));
+      setEditingChatId(null);
     }
   };
 
   const fetchMessages = async (chatId) => {
-    try {
-      const res = await fetch(`/api/chats/${chatId}/messages`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(data);
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    const { ok, data } = await api.get(`/api/chats/${chatId}/messages`);
+    if (ok) setMessages(data);
   };
 
   // Settings operations
   const fetchLocalModels = async (tempSettings) => {
-    try {
-      const targetSettings = tempSettings || settings;
-      let url = '/api/settings/local-models';
-      if (targetSettings && targetSettings.local_url) {
-        url += `?localUrl=${encodeURIComponent(targetSettings.local_url)}&localApiKey=${encodeURIComponent(targetSettings.local_key || '')}&localApiStyle=${encodeURIComponent(targetSettings.local_api_style || '')}`;
-      }
-      const res = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setLocalModels(data);
-        if (data.length === 0) {
-          showToast('No models are currently loaded in LM Studio/Ollama.', 'warning');
-        } else {
-          showToast('Local models scanned successfully.', 'success');
-        }
+    const targetSettings = tempSettings || settings;
+    let url = '/api/settings/local-models';
+    if (targetSettings && targetSettings.local_url) {
+      url += `?localUrl=${encodeURIComponent(targetSettings.local_url)}&localApiKey=${encodeURIComponent(targetSettings.local_key || '')}&localApiStyle=${encodeURIComponent(targetSettings.local_api_style || '')}`;
+    }
+    const { ok, data, error } = await api.get(url);
+    if (ok) {
+      setLocalModels(data);
+      if (data.length === 0) {
+        showToast('No models are currently loaded in LM Studio/Ollama.', 'warning');
       } else {
-        const errData = await res.json();
-        showToast(`Failed to scan local models: ${errData.error || 'Connection failed'}`, 'error');
+        showToast('Local models scanned successfully.', 'success');
       }
-    } catch (err) {
-      console.error(err);
-      showToast('Failed to scan local models: Connection failed', 'error');
+    } else {
+      showToast(`Failed to scan local models: ${error || 'Connection failed'}`, 'error');
     }
   };
 
   const fetchOnlineModels = async () => {
-    try {
-      const res = await fetch('/api/settings/online-models', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setOnlineModels(data);
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    const { ok, data } = await api.get('/api/settings/online-models');
+    if (ok) setOnlineModels(data);
   };
 
   const fetchSettings = async () => {
-    try {
-      const res = await fetch('/api/settings', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const loadedSettings = {
-          provider: data.provider || 'local',
-          model_name: data.model_name || 'qwen2.5-coder-7b-instruct',
-          gemini_key: data.gemini_key || '',
-          local_key: data.local_key || '',
-          local_url: data.local_url || 'http://192.168.1.42:1234/v1',
-          local_api_style: data.local_api_style || 'openai',
-          online_url: data.online_url || '',
-          online_key: data.online_key || '',
-          online_provider: data.online_provider || 'gemini',
-          preferred_local_model: data.preferred_local_model || '',
-          preferred_online_model: data.preferred_online_model || '',
-          is_main_host: data.is_main_host === 1 || data.is_main_host === true || false
-        };
-        setSettings(loadedSettings);
-        setIsSetupComplete(data.is_setup_complete !== false);
+    const { ok, data } = await api.get('/api/settings');
+    if (ok) {
+      const loadedSettings = {
+        provider: data.provider || 'local',
+        model_name: data.model_name || 'qwen2.5-coder-7b-instruct',
+        gemini_key: data.gemini_key || '',
+        local_key: data.local_key || '',
+        local_url: data.local_url || 'http://192.168.1.42:1234/v1',
+        local_api_style: data.local_api_style || 'openai',
+        online_url: data.online_url || '',
+        online_key: data.online_key || '',
+        online_provider: data.online_provider || 'gemini',
+        preferred_local_model: data.preferred_local_model || '',
+        preferred_online_model: data.preferred_online_model || '',
+        is_main_host: data.is_main_host === 1 || data.is_main_host === true || false
+      };
+      setSettings(loadedSettings);
+      setIsSetupComplete(data.is_setup_complete !== false);
 
-        const initialLiveModel = loadedSettings.provider === 'local'
-          ? (loadedSettings.preferred_local_model || loadedSettings.model_name)
-          : (loadedSettings.preferred_online_model || loadedSettings.model_name);
-        setLiveModel(initialLiveModel);
-      }
-      fetchLocalModels();
-      fetchOnlineModels();
-    } catch (err) {
-      console.error(err);
+      const initialLiveModel = loadedSettings.provider === 'local'
+        ? (loadedSettings.preferred_local_model || loadedSettings.model_name)
+        : (loadedSettings.preferred_online_model || loadedSettings.model_name);
+      setLiveModel(initialLiveModel);
     }
+    fetchLocalModels();
+    fetchOnlineModels();
   };
 
   const saveSettings = async (newSettings) => {
@@ -660,126 +552,64 @@ function App() {
       preferred_local_model: newSettings.provider === 'local' ? newSettings.model_name : newSettings.preferred_local_model,
       preferred_online_model: newSettings.provider !== 'local' ? newSettings.model_name : newSettings.preferred_online_model
     };
-    try {
-      const res = await fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(updatedSettings)
-      });
-      if (res.ok) {
-        setSettings(updatedSettings);
+    const { ok } = await api.put('/api/settings', updatedSettings);
+    if (ok) {
+      setSettings(updatedSettings);
 
-        const nextLiveModel = updatedSettings.provider === 'local'
-          ? (updatedSettings.preferred_local_model || updatedSettings.model_name)
-          : (updatedSettings.preferred_online_model || updatedSettings.model_name);
-        setLiveModel(nextLiveModel);
+      const nextLiveModel = updatedSettings.provider === 'local'
+        ? (updatedSettings.preferred_local_model || updatedSettings.model_name)
+        : (updatedSettings.preferred_online_model || updatedSettings.model_name);
+      setLiveModel(nextLiveModel);
 
-        setIsSettingsOpen(false);
-        fetchLocalModels(updatedSettings);
-        fetchOnlineModels();
-      }
-    } catch (err) {
-      console.error(err);
+      setIsSettingsOpen(false);
+      fetchLocalModels(updatedSettings);
+      fetchOnlineModels();
     }
   };
 
   const fetchProfile = async () => {
-    try {
-      const res = await fetch('/api/profile', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setProfile(data);
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    const { ok, data } = await api.get('/api/profile');
+    if (ok) setProfile(data);
   };
 
   const saveProfile = async (newProfile) => {
-    try {
-      const res = await fetch('/api/profile', {
-        method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(newProfile)
-      });
-      if (res.ok) {
-        setProfile(newProfile);
-        setIsProfileOpen(false);
-      }
-    } catch (err) {
-      console.error(err);
+    const { ok } = await api.put('/api/profile', newProfile);
+    if (ok) {
+      setProfile(newProfile);
+      setIsProfileOpen(false);
     }
   };
 
   const [memories, setMemories] = useState([]);
 
   const fetchMemories = async () => {
-    try {
-      const res = await fetch('/api/memories', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMemories(data);
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    const { ok, data } = await api.get('/api/memories');
+    if (ok) setMemories(data);
   };
 
   const handleAddMemory = async ({ content, level }) => {
-    try {
-      const res = await fetch('/api/memories', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ content, level })
-      });
-      if (res.ok) {
-        fetchMemories();
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    const { ok } = await api.post('/api/memories', { content, level });
+    if (ok) fetchMemories();
   };
 
-  const handleDeleteMemory = async (id) => {
-    try {
-      const res = await fetch(`/api/memories/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        fetchMemories();
+  // BUG-7 (docs/REVIEW_2026-08-03.md): standardized on the same CustomAlertModal confirm
+  // pattern deleteChat already uses, instead of deleting immediately with no confirmation.
+  const handleDeleteMemory = (id) => {
+    setPopupConfirm({
+      type: 'confirm',
+      title: 'PATTI',
+      message: 'Delete this memory? This cannot be undone.',
+      onConfirm: async () => {
+        const { ok } = await api.delete(`/api/memories/${id}`);
+        if (ok) fetchMemories();
       }
-    } catch (err) {
-      console.error(err);
-    }
+    });
   };
 
   // Calendar operations
   const fetchCalendarEvents = async () => {
-    try {
-      const res = await fetch(`/api/calendar?date=${calendarDate}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCalendarEvents(data);
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    const { ok, data } = await api.get(`/api/calendar?date=${calendarDate}`);
+    if (ok) setCalendarEvents(data);
   };
 
   useEffect(() => {
@@ -788,36 +618,24 @@ function App() {
 
   const handleAddCalendarEvent = async (e) => {
     e.preventDefault();
-    try {
-      const res = await fetch('/api/calendar', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(calendarForm)
-      });
-      if (res.ok) {
-        setCalendarForm({ title: '', start_time: '', end_time: '', description: '' });
-        fetchCalendarEvents();
-      }
-    } catch (err) {
-      console.error(err);
+    const { ok } = await api.post('/api/calendar', calendarForm);
+    if (ok) {
+      setCalendarForm({ title: '', start_time: '', end_time: '', description: '' });
+      fetchCalendarEvents();
     }
   };
 
-  const handleDeleteCalendarEvent = async (id) => {
-    try {
-      const res = await fetch(`/api/calendar/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        fetchCalendarEvents();
+  // BUG-7: same standardization as handleDeleteMemory above.
+  const handleDeleteCalendarEvent = (id) => {
+    setPopupConfirm({
+      type: 'confirm',
+      title: 'PATTI',
+      message: 'Delete this calendar event? This cannot be undone.',
+      onConfirm: async () => {
+        const { ok } = await api.delete(`/api/calendar/${id}`);
+        if (ok) fetchCalendarEvents();
       }
-    } catch (err) {
-      console.error(err);
-    }
+    });
   };
 
   const handleResolveCommand = async (commandId, approved, editedCmd, password) => {
@@ -838,18 +656,8 @@ function App() {
         : log
     ));
 
-    try {
-      await fetch('/api/chat/approve-command', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ commandId, approved, command: finalCmd, password })
-      });
-    } catch (err) {
-      console.error('Failed to resolve command:', err);
-    }
+    const { ok, error } = await api.post('/api/chat/approve-command', { commandId, approved, command: finalCmd, password });
+    if (!ok) console.error('Failed to resolve command:', error);
   };
 
   // Chat Streaming Logic
@@ -877,6 +685,8 @@ function App() {
     abortControllerRef.current = controller;
 
     try {
+      // FEAT-9: not migrated to useApi() - this needs the raw, unparsed Response to read its
+      // body via getReader() below; useApi's wrapper always resolves the body as JSON.
       const response = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: {
@@ -1110,14 +920,8 @@ function App() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
-    try {
-      await fetch('/api/lmstudio/eject-model', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-    } catch (err) {
-      console.error('Failed to eject model:', err);
-    }
+    const { ok, error } = await api.post('/api/lmstudio/eject-model');
+    if (!ok) console.error('Failed to eject model:', error);
   };
 
   // Auth Screen Render
@@ -1340,6 +1144,7 @@ function App() {
             nodes={nodes}
             handleDeleteNode={handleDeleteNode}
             onRefreshNodes={fetchNodes}
+            onRequestConfirm={setPopupConfirm}
           />
         )}
       </main>
@@ -1371,6 +1176,7 @@ function App() {
         saveSettings={saveSettings}
         localModels={localModels}
         onlineModels={onlineModels}
+        onLogoutEverywhere={handleLogoutEverywhere}
       />
 
       {/* Sudo Modal */}

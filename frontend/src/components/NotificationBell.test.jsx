@@ -86,4 +86,28 @@ describe('NotificationBell Component', () => {
     }));
     expect(screen.queryByText('Mark all read')).not.toBeInTheDocument();
   });
+
+  // FEAT-7 (docs/REVIEW_2026-08-03.md): status must not be color-only.
+  test('each notification type has an accessible icon label, not just a color', async () => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        notifications: [
+          { id: 1, type: 'info', message: 'Info one', chat_id: null, is_read: 0, created_at: '2026-08-02 06:00:00' },
+          { id: 2, type: 'error', message: 'Error one', chat_id: null, is_read: 0, created_at: '2026-08-02 05:00:00' },
+          { id: 3, type: 'unknown_future_type', message: 'Mystery one', chat_id: null, is_read: 0, created_at: '2026-08-02 04:00:00' }
+        ],
+        unreadCount: 3
+      })
+    });
+    render(<NotificationBell token="t" refreshSignal={0} onOpenChat={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText('3')).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText('Notifications, 3 unread'));
+
+    expect(screen.getByRole('img', { name: 'info notification' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'error notification' })).toBeInTheDocument();
+    // An unrecognized type still gets a real accessible label, not a silently blank indicator.
+    expect(screen.getByRole('img', { name: 'unknown_future_type notification' })).toBeInTheDocument();
+  });
 });

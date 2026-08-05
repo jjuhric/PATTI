@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Trash2, ExternalLink, RefreshCw } from 'lucide-react';
+import DataTable from './DataTable';
 
 export default function AgentDashboard({ nodes = [], token, handleDeleteNode, onRefresh, activeSubTab = 'nodes' }) {
   const [scanning, setScanning] = useState(false);
@@ -95,72 +96,82 @@ export default function AgentDashboard({ nodes = [], token, handleDeleteNode, on
           </a>
         </div>
       </div>
-      {activeSubTab === 'nodes' && (
-        <div className="overflow-x-auto w-full">
-          <table className="table table-zebra w-full">
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Node Name</th>
-                <th>Device Signature</th>
-                <th>Network IP Address</th>
-                <th>Health Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(() => {
-                const uniqueNodes = [];
-                const ipMap = new Map();
+      {activeSubTab === 'nodes' && (() => {
+        // FEAT-10 (docs/REVIEW_2026-08-03.md): this dedup/filter step works around apparent
+        // duplicate/stale rows and a hardcoded gateway IP coming back from the backend - left
+        // in place as-is here (fixing the root cause is a separate backend investigation), but
+        // now feeds a real DataTable (FEAT-1) instead of a hand-rolled unbounded table.
+        const uniqueNodes = [];
+        const ipMap = new Map();
 
-                // Sort nodes to prioritize google_home devices over Google Assistant duplicates
-                const sortedNodes = [...nodes].sort((a, b) => {
-                  if (a.device_type === 'google_home' && b.device_type !== 'google_home') return -1;
-                  if (b.device_type === 'google_home' && a.device_type !== 'google_home') return 1;
-                  return 0;
-                });
+        // Sort nodes to prioritize google_home devices over Google Assistant duplicates
+        const sortedNodes = [...nodes].sort((a, b) => {
+          if (a.device_type === 'google_home' && b.device_type !== 'google_home') return -1;
+          if (b.device_type === 'google_home' && a.device_type !== 'google_home') return 1;
+          return 0;
+        });
 
-                for (const node of sortedNodes) {
-                  // Hide gateway/subnet IP 192.168.1.1
-                  if (node.ip_address === '192.168.1.1') {
-                    continue;
-                  }
-                  // Hide duplicate IPs (keeps first match, which prefers google_home due to sorting)
-                  if (!ipMap.has(node.ip_address)) {
-                    ipMap.set(node.ip_address, node);
-                    uniqueNodes.push(node);
-                  }
-                }
+        for (const node of sortedNodes) {
+          // Hide gateway/subnet IP 192.168.1.1
+          if (node.ip_address === '192.168.1.1') {
+            continue;
+          }
+          // Hide duplicate IPs (keeps first match, which prefers google_home due to sorting)
+          if (!ipMap.has(node.ip_address)) {
+            ipMap.set(node.ip_address, node);
+            uniqueNodes.push(node);
+          }
+        }
 
-                return uniqueNodes
-                  .filter(node => node.is_online === 1 || node.is_online === true)
-                  .map(node => {
-                    return (
-                      <tr key={node.id}>
-                        <td>
-                          <div className="bg-success" style={{ width: 12, height: 12, borderRadius: '50%' }} />
-                        </td>
-                        <td>{node.node_name}</td>
-                        <td>{node.device_type}</td>
-                        <td>{node.ip_address}:{node.port}</td>
-                        <td>
-                          <span className="bg-success" style={{ padding: '2px 8px', borderRadius: 4, color: '#fff', fontWeight: 600 }}>
-                            Healthy
-                          </span>
-                        </td>
-                        <td>
-                          <button className="btn btn-ghost btn-sm text-error" onClick={() => handleDeleteNode(node.id)} aria-label={`Delete node ${node.node_name}`}>
-                            <Trash2 size={16} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  });
-              })()}
-            </tbody>
-          </table>
-        </div>
-      )}
+        const onlineNodes = uniqueNodes.filter(node => node.is_online === 1 || node.is_online === true);
+
+        return (
+          <DataTable
+            columns={[
+              {
+                key: 'status',
+                label: 'Status',
+                searchable: false,
+                render: () => <div className="bg-success" style={{ width: 12, height: 12, borderRadius: '50%' }} />
+              },
+              { key: 'node_name', label: 'Node Name', sortable: true },
+              { key: 'device_type', label: 'Device Signature', sortable: true },
+              {
+                key: 'ip_address',
+                label: 'Network IP Address',
+                sortable: true,
+                searchValue: (node) => `${node.ip_address}:${node.port}`,
+                render: (node) => `${node.ip_address}:${node.port}`
+              },
+              {
+                key: 'health',
+                label: 'Health Status',
+                searchable: false,
+                render: () => (
+                  <span className="bg-success" style={{ padding: '2px 8px', borderRadius: 4, color: '#fff', fontWeight: 600 }}>
+                    Healthy
+                  </span>
+                )
+              },
+              {
+                key: 'actions',
+                label: 'Actions',
+                searchable: false,
+                render: (node) => (
+                  <button className="btn btn-ghost btn-sm text-error" onClick={() => handleDeleteNode(node.id)} aria-label={`Delete node ${node.node_name}`}>
+                    <Trash2 size={16} />
+                  </button>
+                )
+              }
+            ]}
+            data={onlineNodes}
+            getRowKey={(node) => node.id}
+            searchPlaceholder="Search nodes..."
+            emptyMessage="No online nodes found."
+            pageSize={10}
+          />
+        );
+      })()}
     </div>
   );
 }

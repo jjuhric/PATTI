@@ -5,12 +5,13 @@ export default function CustomAlertModal({ alert, onClose }) {
   if (!alert) return null;
 
   const logoUrl = window.location.pathname.startsWith('/monitor') ? '/monitor/favicon.png' : '/favicon.png';
+  const pattiTextUrl = window.location.pathname.startsWith('/monitor') ? '/monitor/patti_text.png' : '/patti_text.png';
 
   const getTypeStyles = () => {
     switch (alert.type) {
       case 'error':
         return {
-          icon: <AlertCircle className="text-red-500" size={32} style={{ color: '#ef4444' }} />,
+          icon: <AlertCircle size={32} style={{ color: '#ef4444' }} />,
           borderColor: '#ef4444',
           badgeBg: 'rgba(239, 68, 68, 0.1)',
           badgeText: 'Error',
@@ -18,7 +19,7 @@ export default function CustomAlertModal({ alert, onClose }) {
         };
       case 'warning':
         return {
-          icon: <AlertTriangle className="text-amber-500" size={32} style={{ color: '#f59e0b' }} />,
+          icon: <AlertTriangle size={32} style={{ color: '#f59e0b' }} />,
           borderColor: '#f59e0b',
           badgeBg: 'rgba(245, 158, 11, 0.1)',
           badgeText: 'Warning',
@@ -26,7 +27,7 @@ export default function CustomAlertModal({ alert, onClose }) {
         };
       case 'confirm':
         return {
-          icon: <AlertTriangle className="text-amber-500" size={32} style={{ color: '#f59e0b' }} />,
+          icon: <AlertTriangle size={32} style={{ color: '#f59e0b' }} />,
           borderColor: '#f59e0b',
           badgeBg: 'rgba(245, 158, 11, 0.1)',
           badgeText: 'Confirm',
@@ -34,7 +35,7 @@ export default function CustomAlertModal({ alert, onClose }) {
         };
       default:
         return {
-          icon: <Info className="text-violet-500" size={32} style={{ color: '#8b5cf6' }} />,
+          icon: <Info size={32} style={{ color: '#8b5cf6' }} />,
           borderColor: '#8b5cf6',
           badgeBg: 'rgba(139, 92, 246, 0.1)',
           badgeText: 'Info',
@@ -82,10 +83,12 @@ export default function CustomAlertModal({ alert, onClose }) {
           background: 'rgba(0, 0, 0, 0.2)'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <img src={logoUrl} alt="P.A.T.T.I." style={{ width: '22px', height: '22px', objectFit: 'contain' }} />
-            <span style={{ fontWeight: 650, fontSize: '1rem', color: '#f8fafc', letterSpacing: '0.5px' }}>
-              P.A.T.T.I.
-            </span>
+            <img src={logoUrl} alt="PATTI" style={{ width: '22px', height: '22px', objectFit: 'contain' }} />
+            <img 
+              src={pattiTextUrl} 
+              alt="PATTI" 
+              className="patti-logo-image modal-patti-logo" 
+            />
           </div>
           <button 
             onClick={onClose}

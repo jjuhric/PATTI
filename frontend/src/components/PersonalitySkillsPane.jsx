@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Sliders, Download, Upload, Trash2, CheckCircle, HelpCircle, Loader2, Edit, Wand2 } from 'lucide-react';
 import SkillWizardModal from './SkillWizardModal';
+import { useApi } from '../hooks/useApi';
 
 export default function PersonalitySkillsPane({ token }) {
+  const api = useApi(token);
   const [activeTab, setActiveTab] = useState('personalities');
   const [personalities, setPersonalities] = useState([]);
   const [skills, setSkills] = useState([]);
@@ -37,82 +39,41 @@ export default function PersonalitySkillsPane({ token }) {
   const fetchData = async () => {
     setLoading(true);
     setError('');
-    try {
-      const res = await fetch('/api/personalities-skills', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setPersonalities(data.personalities || []);
-        setSkills(data.skills || []);
-      } else {
-        const errData = await res.json();
-        setError(errData.error || 'Failed to fetch profiles.');
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+    const { ok, data, error: err } = await api.get('/api/personalities-skills');
+    if (ok) {
+      setPersonalities(data.personalities || []);
+      setSkills(data.skills || []);
+    } else {
+      setError(err || 'Failed to fetch profiles.');
     }
+    setLoading(false);
   };
 
   const handleActivatePersonality = async (id) => {
-    try {
-      const res = await fetch('/api/personalities-skills/personalities/activate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ id })
-      });
-      if (res.ok) {
-        fetchData();
-      } else {
-        const errData = await res.json();
-        alert(errData.error || 'Failed to set default personality.');
-      }
-    } catch (err) {
-      alert(err.message);
+    const { ok, error } = await api.post('/api/personalities-skills/personalities/activate', { id });
+    if (ok) {
+      fetchData();
+    } else {
+      alert(error || 'Failed to set default personality.');
     }
   };
 
   const handleToggleSkill = async (id, currentActive) => {
-    try {
-      const res = await fetch('/api/personalities-skills/skills/toggle', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ id, is_active: !currentActive })
-      });
-      if (res.ok) {
-        fetchData();
-      } else {
-        const errData = await res.json();
-        alert(errData.error || 'Failed to toggle skill.');
-      }
-    } catch (err) {
-      alert(err.message);
+    const { ok, error } = await api.post('/api/personalities-skills/skills/toggle', { id, is_active: !currentActive });
+    if (ok) {
+      fetchData();
+    } else {
+      alert(error || 'Failed to toggle skill.');
     }
   };
 
   const handleDeleteItem = async (type, id) => {
     if (!window.confirm(`Are you sure you want to delete this ${type}?`)) return;
-    try {
-      const res = await fetch(`/api/personalities-skills/${type === 'personality' ? 'personalities' : 'skills'}/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        fetchData();
-      } else {
-        const errData = await res.json();
-        alert(errData.error || 'Failed to delete item.');
-      }
-    } catch (err) {
-      alert(err.message);
+    const { ok, error } = await api.delete(`/api/personalities-skills/${type === 'personality' ? 'personalities' : 'skills'}/${id}`);
+    if (ok) {
+      fetchData();
+    } else {
+      alert(error || 'Failed to delete item.');
     }
   };
 
@@ -137,58 +98,32 @@ export default function PersonalitySkillsPane({ token }) {
   const handleFetchUrl = async () => {
     if (!urlInput.trim()) return;
     setFetchingUrl(true);
-    try {
-      const res = await fetch('/api/personalities-skills/fetch-url', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ url: urlInput })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setPreviewContent(data.rawContent);
-        setPreviewType(activeTab === 'personalities' ? 'personality' : 'skill');
-        setOverrideName('');
-        setOverrideDesc('');
-        setShowPreviewModal(true);
-      } else {
-        const errData = await res.json();
-        alert(errData.error || 'Failed to fetch content from URL.');
-      }
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setFetchingUrl(false);
+    const { ok, data, error } = await api.post('/api/personalities-skills/fetch-url', { url: urlInput });
+    if (ok) {
+      setPreviewContent(data.rawContent);
+      setPreviewType(activeTab === 'personalities' ? 'personality' : 'skill');
+      setOverrideName('');
+      setOverrideDesc('');
+      setShowPreviewModal(true);
+    } else {
+      alert(error || 'Failed to fetch content from URL.');
     }
+    setFetchingUrl(false);
   };
 
   const handleConfirmImport = async () => {
-    try {
-      const res = await fetch('/api/personalities-skills/import', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          type: previewType,
-          content: previewContent,
-          overrideName: overrideName.trim() || undefined,
-          overrideDesc: overrideDesc.trim() || undefined
-        })
-      });
-      if (res.ok) {
-        setShowPreviewModal(false);
-        setUrlInput('');
-        fetchData();
-      } else {
-        const errData = await res.json();
-        alert(errData.error || 'Failed to import profile.');
-      }
-    } catch (err) {
-      alert(err.message);
+    const { ok, error } = await api.post('/api/personalities-skills/import', {
+      type: previewType,
+      content: previewContent,
+      overrideName: overrideName.trim() || undefined,
+      overrideDesc: overrideDesc.trim() || undefined
+    });
+    if (ok) {
+      setShowPreviewModal(false);
+      setUrlInput('');
+      fetchData();
+    } else {
+      alert(error || 'Failed to import profile.');
     }
   };
 
@@ -199,29 +134,17 @@ export default function PersonalitySkillsPane({ token }) {
     }
     const type = editItem.type;
     const bodyKey = type === 'personality' ? 'system_prompt' : 'instructions';
-    try {
-      const res = await fetch(`/api/personalities-skills/${type === 'personality' ? 'personalities' : 'skills'}/${editItem.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          name: editName.trim(),
-          description: editDesc.trim(),
-          [bodyKey]: editBody
-        })
-      });
-      if (res.ok) {
-        setShowEditModal(false);
-        setEditItem(null);
-        fetchData();
-      } else {
-        const errData = await res.json();
-        alert(errData.error || 'Failed to update profile.');
-      }
-    } catch (err) {
-      alert(err.message);
+    const { ok, error } = await api.put(`/api/personalities-skills/${type === 'personality' ? 'personalities' : 'skills'}/${editItem.id}`, {
+      name: editName.trim(),
+      description: editDesc.trim(),
+      [bodyKey]: editBody
+    });
+    if (ok) {
+      setShowEditModal(false);
+      setEditItem(null);
+      fetchData();
+    } else {
+      alert(error || 'Failed to update profile.');
     }
   };
 
