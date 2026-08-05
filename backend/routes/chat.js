@@ -101,6 +101,64 @@ router.get('/chats', authenticateToken, async (req, res) => {
   }
 });
 
+// FEAT-2 (docs/REVIEW_2026-08-03.md): finding an old conversation currently means scrolling the
+// raw Sidebar list, whose titles are mostly auto-generated timestamps ("Chat 3:45 PM") - useless
+// for title-only search. A plain LIKE scan (rather than an FTS5 virtual table + sync triggers)
+// is deliberate: this is a personal-scale assistant, at most a few thousand messages per user,
+// where LIKE over an already-indexed user_id is fast enough without the added complexity of
+// keeping a separate full-text index in sync on every insert/edit/delete.
+router.get('/chats/search', authenticateToken, async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+
+  try {
+    const db = await getDb();
+    // Escape LIKE's own wildcard characters in the user's term so a literal "%" or "_"
+    // searches for that literal character instead of matching everything.
+    const escaped = q.replace(/[\\%_]/g, (c) => `\\${c}`);
+    const pattern = `%${escaped}%`;
+
+    const rows = await db.all(
+      `SELECT c.id as chatId, c.title,
+        (SELECT m.content FROM messages m WHERE m.chat_id = c.id AND m.content LIKE ? ESCAPE '\\' ORDER BY m.id DESC LIMIT 1) as matchedContent
+       FROM chats c
+       WHERE c.user_id = ?
+         AND (c.title LIKE ? ESCAPE '\\' OR EXISTS (
+           SELECT 1 FROM messages m2 WHERE m2.chat_id = c.id AND m2.content LIKE ? ESCAPE '\\'
+         ))
+       ORDER BY c.created_at DESC
+       LIMIT 30`,
+      [pattern, req.user.id, pattern, pattern]
+    );
+
+    res.json(rows.map((r) => ({
+      chatId: r.chatId,
+      title: r.title,
+      snippet: buildSnippet(r.matchedContent, q)
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Builds a short excerpt of `text` centered on the first occurrence of `term`, with ellipses
+ * where the excerpt was truncated - the same idea as a search engine's result snippet, so a
+ * search hit shows *why* it matched instead of just the chat title.
+ */
+function buildSnippet(text, term, contextChars = 60) {
+  if (!text) return '';
+  const idx = text.toLowerCase().indexOf(term.toLowerCase());
+  if (idx === -1) return text.length > contextChars * 2 ? `${text.slice(0, contextChars * 2)}…` : text;
+
+  const start = Math.max(0, idx - contextChars);
+  const end = Math.min(text.length, idx + term.length + contextChars);
+  let snippet = text.slice(start, end).trim();
+  if (start > 0) snippet = `…${snippet}`;
+  if (end < text.length) snippet = `${snippet}…`;
+  return snippet;
+}
+
 router.post('/chats', authenticateToken, async (req, res) => {
   const { title } = req.body;
   try {
@@ -526,4 +584,5 @@ router.post('/chat/approve-command', authenticateToken, (req, res) => {
   }
 });
 
+router.buildSnippet = buildSnippet;
 module.exports = router;
