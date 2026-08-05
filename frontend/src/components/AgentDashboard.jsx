@@ -1,10 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import { Trash2, ExternalLink, RefreshCw } from 'lucide-react';
 import DataTable from './DataTable';
+import { useApi } from '../hooks/useApi';
 
-export default function AgentDashboard({ nodes = [], token, handleDeleteNode, onRefresh, activeSubTab = 'nodes' }) {
+export default function AgentDashboard({ nodes = [], token, handleDeleteNode, onRefresh, activeSubTab = 'nodes', onRequestConfirm }) {
+  const api = useApi(token);
   const [scanning, setScanning] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // FEAT-3 (docs/REVIEW_2026-08-03.md): bulk delete, firing the same per-node DELETE endpoint
+  // the single-delete button (handleDeleteNode, owned by App.jsx) eventually calls.
+  const handleBulkDeleteNodes = (selectedNodes, clearSelection) => {
+    if (selectedNodes.length === 0) return;
+    const label = `${selectedNodes.length} node${selectedNodes.length === 1 ? '' : 's'}`;
+    const message = `Delete ${label}? This cannot be undone.`;
+    const run = async () => {
+      await Promise.all(selectedNodes.map((n) => api.delete(`/api/nodes/${n.id}`)));
+      clearSelection();
+      if (typeof onRefresh === 'function') onRefresh();
+    };
+    if (onRequestConfirm) {
+      onRequestConfirm({ type: 'confirm', title: 'PATTI', message, onConfirm: run });
+    } else {
+      if (!window.confirm(message)) return;
+      run();
+    }
+  };
 
   const handleScan = async () => {
     setScanning(true);
@@ -166,9 +187,16 @@ export default function AgentDashboard({ nodes = [], token, handleDeleteNode, on
             ]}
             data={onlineNodes}
             getRowKey={(node) => node.id}
+            getRowLabel={(node) => node.node_name}
             searchPlaceholder="Search nodes..."
             emptyMessage="No online nodes found."
             pageSize={10}
+            selectable
+            bulkActions={(selectedNodes, clearSelection) => (
+              <button className="btn btn-sm text-error" onClick={() => handleBulkDeleteNodes(selectedNodes, clearSelection)}>
+                Delete {selectedNodes.length} node{selectedNodes.length === 1 ? '' : 's'}
+              </button>
+            )}
           />
         );
       })()}

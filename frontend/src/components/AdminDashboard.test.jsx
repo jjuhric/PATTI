@@ -126,3 +126,55 @@ describe('AdminDashboard - delete user confirmation', () => {
     windowConfirmSpy.mockRestore();
   });
 });
+
+// FEAT-3 (docs/REVIEW_2026-08-03.md): bulk delete for the Users table.
+describe('AdminDashboard - bulk delete users', () => {
+  const users = [
+    { id: 1, username: 'admin_user', name: null, is_admin: 1, token_quota: 1000000, total_used_24h: 0 },
+    { id: 2, username: 'alice', name: null, is_admin: 0, token_quota: 1000000, total_used_24h: 0 },
+    { id: 3, username: 'bob', name: null, is_admin: 0, token_quota: 1000000, total_used_24h: 0 }
+  ];
+
+  beforeEach(() => {
+    global.fetch = vi.fn((url, options = {}) => {
+      if (url === '/api/admin/users' && (!options.method || options.method === 'GET')) {
+        return Promise.resolve({ ok: true, json: async () => users });
+      }
+      if (/^\/api\/admin\/users\/\d+$/.test(url) && options.method === 'DELETE') {
+        return Promise.resolve({ ok: true, json: async () => ({ message: 'Deleted.' }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+  });
+
+  test('selecting users shows a bulk-delete button that fires one DELETE per selected user, excluding self', async () => {
+    const onRequestConfirm = vi.fn();
+    render(<AdminDashboard token="test-token" currentUserId={1} nodes={[]} handleDeleteNode={vi.fn()} onRequestConfirm={onRequestConfirm} />);
+    await waitFor(() => expect(screen.getByText('alice')).toBeInTheDocument());
+
+    // Select-all on the page includes the admin's own row, but the bulk handler excludes it.
+    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete 2 users' }));
+
+    expect(onRequestConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Delete 2 users? This cannot be undone.'
+    }));
+    await onRequestConfirm.mock.calls[0][0].onConfirm();
+
+    await waitFor(() => {
+      expect(global.fetch.mock.calls.some(([url, opts]) => url === '/api/admin/users/2' && opts?.method === 'DELETE')).toBe(true);
+      expect(global.fetch.mock.calls.some(([url, opts]) => url === '/api/admin/users/3' && opts?.method === 'DELETE')).toBe(true);
+    });
+    // Never fires a DELETE against the requester's own account.
+    expect(global.fetch.mock.calls.some(([url, opts]) => url === '/api/admin/users/1' && opts?.method === 'DELETE')).toBe(false);
+  });
+
+  test('shows an informative message instead of a delete button when only the requester is selected', async () => {
+    render(<AdminDashboard token="test-token" currentUserId={1} nodes={[]} handleDeleteNode={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText('admin_user')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText('Select admin_user'));
+    expect(screen.getByText("Your own account can't be bulk-deleted.")).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Delete \d+ user/ })).not.toBeInTheDocument();
+  });
+});

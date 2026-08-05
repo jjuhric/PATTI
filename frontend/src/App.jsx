@@ -478,6 +478,23 @@ function App() {
     });
   };
 
+  // FEAT-3 (docs/REVIEW_2026-08-03.md): bulk delete, one confirm dialog for N ids rather than
+  // reusing deleteChat N times (which would pop up N separate confirmations).
+  const handleBulkDeleteChats = (ids, clearSelection) => {
+    if (ids.length === 0) return;
+    setPopupConfirm({
+      type: 'confirm',
+      title: 'PATTI',
+      message: `Delete ${ids.length} chat${ids.length === 1 ? '' : 's'}? This cannot be undone.`,
+      onConfirm: async () => {
+        await Promise.all(ids.map((id) => api.delete(`/api/chats/${id}`)));
+        setChats((prev) => prev.filter((c) => !ids.includes(c.id)));
+        if (ids.includes(activeChatId)) setActiveChatId(null);
+        clearSelection();
+      }
+    });
+  };
+
   const handleRenameChat = async (id, newTitle) => {
     if (!newTitle.trim()) return;
     const { ok } = await api.put(`/api/chats/${id}`, { title: newTitle });
@@ -490,6 +507,35 @@ function App() {
   const fetchMessages = async (chatId) => {
     const { ok, data } = await api.get(`/api/chats/${chatId}/messages`);
     if (ok) setMessages(data);
+  };
+
+  // FEAT-2 (docs/REVIEW_2026-08-03.md): chat search - titles are mostly auto-generated
+  // timestamps, so finding an old conversation needs a real content search, not just filtering
+  // the already-loaded chats-by-title list.
+  const [chatSearchQuery, setChatSearchQuery] = useState('');
+  const [chatSearchResults, setChatSearchResults] = useState([]);
+  const [isSearchingChats, setIsSearchingChats] = useState(false);
+
+  useEffect(() => {
+    if (!chatSearchQuery.trim() || chatSearchQuery.trim().length < 2) {
+      setChatSearchResults([]);
+      setIsSearchingChats(false);
+      return;
+    }
+    setIsSearchingChats(true);
+    const handle = setTimeout(async () => {
+      const { ok, data } = await api.get(`/api/chats/search?q=${encodeURIComponent(chatSearchQuery.trim())}`);
+      setChatSearchResults(ok ? data : []);
+      setIsSearchingChats(false);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [chatSearchQuery]);
+
+  const handleOpenSearchResult = (chatId) => {
+    setActiveChatId(chatId);
+    setActiveTab('chat');
+    setChatSearchQuery('');
+    setIsMobileSidebarOpen(false);
   };
 
   // Settings operations
@@ -602,6 +648,22 @@ function App() {
       onConfirm: async () => {
         const { ok } = await api.delete(`/api/memories/${id}`);
         if (ok) fetchMemories();
+      }
+    });
+  };
+
+  // FEAT-3 (docs/REVIEW_2026-08-03.md): bulk delete, one confirm dialog for N ids rather than
+  // reusing handleDeleteMemory N times (which would pop up N separate confirmations).
+  const handleBulkDeleteMemories = (ids, clearSelection) => {
+    if (ids.length === 0) return;
+    setPopupConfirm({
+      type: 'confirm',
+      title: 'PATTI',
+      message: `Delete ${ids.length} memor${ids.length === 1 ? 'y' : 'ies'}? This cannot be undone.`,
+      onConfirm: async () => {
+        await Promise.all(ids.map((id) => api.delete(`/api/memories/${id}`)));
+        clearSelection();
+        fetchMemories();
       }
     });
   };
@@ -971,6 +1033,7 @@ function App() {
         setEditingTitle={setEditingTitle}
         createChat={createChat}
         deleteChat={deleteChat}
+        onBulkDeleteChats={handleBulkDeleteChats}
         handleRenameChat={handleRenameChat}
         handleLogout={handleLogout}
         setIsSettingsOpen={setIsSettingsOpen}
@@ -979,6 +1042,11 @@ function App() {
         appVersion={appVersion}
         theme={theme}
         toggleTheme={toggleTheme}
+        chatSearchQuery={chatSearchQuery}
+        setChatSearchQuery={setChatSearchQuery}
+        chatSearchResults={chatSearchResults}
+        isSearchingChats={isSearchingChats}
+        onOpenSearchResult={handleOpenSearchResult}
       />
 
       {isMobileSidebarOpen && (
@@ -1123,6 +1191,7 @@ function App() {
             memories={memories}
             onAddMemory={handleAddMemory}
             onDeleteMemory={handleDeleteMemory}
+            onBulkDeleteMemories={handleBulkDeleteMemories}
           />
         )}
         {activeTab === 'dashboard' && (
@@ -1135,6 +1204,7 @@ function App() {
             activeAgent={activeAgent}
             isStreaming={isStreaming}
             settings={settings}
+            onRequestConfirm={setPopupConfirm}
           />
         )}
         {activeTab === 'admin' && user?.is_admin && (

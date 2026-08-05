@@ -139,4 +139,88 @@ describe('DataTable', () => {
     const rows = screen.getAllByRole('row').slice(1);
     expect(within(rows[0]).getAllByRole('cell')[0].textContent).toBe('alice');
   });
+
+  // FEAT-3 (docs/REVIEW_2026-08-03.md): bulk-select and the bulk-actions toolbar.
+  describe('bulk selection', () => {
+    test('no checkboxes render when selectable is false (the default)', () => {
+      render(<DataTable columns={columns} data={users} getRowKey={(r) => r.id} />);
+      expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    });
+
+    test('checking a row shows the bulk toolbar with a count and the bulkActions render prop', () => {
+      const bulkActions = vi.fn((selectedRows, clearSelection) => (
+        <button onClick={() => { clearSelection(); }}>Delete {selectedRows.length}</button>
+      ));
+      render(
+        <DataTable
+          columns={columns}
+          data={users}
+          getRowKey={(r) => r.id}
+          getRowLabel={(r) => r.username}
+          selectable
+          bulkActions={bulkActions}
+          pageSize={null}
+        />
+      );
+
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByLabelText('Select charlie'));
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+      expect(bulkActions).toHaveBeenCalledWith([users[0]], expect.any(Function));
+      expect(screen.getByText('Delete 1')).toBeInTheDocument();
+    });
+
+    test('the header checkbox selects and deselects every row on the current page only', () => {
+      const many = Array.from({ length: 15 }, (_, i) => ({ id: i, username: `user${i}`, age: i }));
+      render(<DataTable columns={columns} data={many} getRowKey={(r) => r.id} selectable pageSize={10} />);
+
+      fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+      expect(screen.getByText('10 selected')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      // Page 2's header checkbox reflects its own (unselected) rows, not page 1's.
+      expect(screen.getByLabelText('Select all rows on this page')).not.toBeChecked();
+
+      fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+      expect(screen.getByText('15 selected')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Prev' }));
+      fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+      expect(screen.getByText('5 selected')).toBeInTheDocument();
+    });
+
+    test('"Clear selection" empties the selection and hides the toolbar', () => {
+      render(<DataTable columns={columns} data={users} getRowKey={(r) => r.id} getRowLabel={(r) => r.username} selectable pageSize={null} />);
+      fireEvent.click(screen.getByLabelText('Select charlie'));
+      fireEvent.click(screen.getByLabelText('Select alice'));
+      expect(screen.getByText('2 selected')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Select charlie')).not.toBeChecked();
+    });
+
+    test('selection is pruned when a selected row disappears from data (e.g. after a delete)', () => {
+      const { rerender } = render(<DataTable columns={columns} data={users} getRowKey={(r) => r.id} getRowLabel={(r) => r.username} selectable pageSize={null} />);
+      fireEvent.click(screen.getByLabelText('Select charlie'));
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+
+      rerender(<DataTable columns={columns} data={users.filter((u) => u.username !== 'charlie')} getRowKey={(r) => r.id} getRowLabel={(r) => r.username} selectable pageSize={null} />);
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    test('getRowLabel customizes the per-row checkbox aria-label', () => {
+      render(
+        <DataTable
+          columns={columns}
+          data={users}
+          getRowKey={(r) => r.id}
+          selectable
+          getRowLabel={(row) => `user ${row.username}`}
+        />
+      );
+      expect(screen.getByLabelText('Select user charlie')).toBeInTheDocument();
+    });
+  });
 });

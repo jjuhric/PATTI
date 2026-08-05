@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { ChevronUp, ChevronDown, ChevronsUpDown, Search } from 'lucide-react';
 
 // FEAT-1 (docs/REVIEW_2026-08-03.md): one shared, reusable table with column sort, a text
@@ -37,12 +37,33 @@ export default function DataTable({
   defaultSortDirection = 'asc',
   pageSize = 10,
   emptyMessage = 'No results.',
-  className = ''
+  className = '',
+  // FEAT-3 (docs/REVIEW_2026-08-03.md): bulk actions. `selectable` adds a checkbox column;
+  // `bulkActions(selectedRows, clearSelection)` renders whatever action buttons the caller
+  // wants in a toolbar that appears once at least one row is selected - DataTable itself has
+  // no opinion on what a "bulk action" does (delete, export, etc.), it just tracks selection.
+  selectable = false,
+  bulkActions = null,
+  getRowLabel = null
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortKey, setSortKey] = useState(defaultSortKey);
   const [sortDirection, setSortDirection] = useState(defaultSortDirection);
   const [page, setPage] = useState(0);
+  const [selectedKeys, setSelectedKeys] = useState(() => new Set());
+
+  // Prune the selection to rows that still exist whenever the underlying data changes (e.g.
+  // after a bulk delete completes and the list refetches) - otherwise a stale selection could
+  // silently point at rows that are no longer there.
+  useEffect(() => {
+    if (!selectable) return;
+    setSelectedKeys((prev) => {
+      if (prev.size === 0) return prev;
+      const validKeys = new Set(data.map(getRowKey));
+      const next = new Set([...prev].filter((k) => validKeys.has(k)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [data, selectable, getRowKey]);
 
   const filtered = useMemo(() => {
     if (!searchable || !searchTerm.trim()) return data;
@@ -77,6 +98,33 @@ export default function DataTable({
   const clampedPage = Math.min(page, pageCount - 1);
   const paged = pageSize ? sorted.slice(clampedPage * pageSize, clampedPage * pageSize + pageSize) : sorted;
 
+  // Selection is scoped to the current page - "select all" across every filtered/sorted result
+  // regardless of pagination risks silently queuing up a much bigger destructive action than
+  // what's visible on screen.
+  const pageKeys = paged.map(getRowKey);
+  const allPageSelected = pageKeys.length > 0 && pageKeys.every((k) => selectedKeys.has(k));
+  const toggleSelectAllOnPage = () => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) pageKeys.forEach((k) => next.delete(k));
+      else pageKeys.forEach((k) => next.add(k));
+      return next;
+    });
+  };
+  const toggleRow = (key) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedKeys(new Set());
+  const selectedRows = useMemo(
+    () => data.filter((row) => selectedKeys.has(getRowKey(row))),
+    [data, selectedKeys, getRowKey]
+  );
+
   const handleSort = (col) => {
     if (!col.sortable) return;
     if (sortKey !== col.key) {
@@ -108,10 +156,29 @@ export default function DataTable({
           />
         </div>
       )}
+      {selectable && selectedKeys.size > 0 && (
+        <div className="data-table-bulk-toolbar">
+          <span className="data-table-bulk-count">{selectedKeys.size} selected</span>
+          {bulkActions && bulkActions(selectedRows, clearSelection)}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={clearSelection}>
+            Clear selection
+          </button>
+        </div>
+      )}
       <div className="overflow-x-auto w-full">
         <table className="table table-zebra w-full">
           <thead>
             <tr>
+              {selectable && (
+                <th style={{ width: 36 }}>
+                  <input
+                    type="checkbox"
+                    checked={allPageSelected}
+                    onChange={toggleSelectAllOnPage}
+                    aria-label="Select all rows on this page"
+                  />
+                </th>
+              )}
               {columns.map((col) => (
                 <th
                   key={col.key}
@@ -138,11 +205,21 @@ export default function DataTable({
           <tbody>
             {paged.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="data-table-empty">{emptyMessage}</td>
+                <td colSpan={columns.length + (selectable ? 1 : 0)} className="data-table-empty">{emptyMessage}</td>
               </tr>
             ) : (
               paged.map((row) => (
                 <tr key={getRowKey(row)}>
+                  {selectable && (
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedKeys.has(getRowKey(row))}
+                        onChange={() => toggleRow(getRowKey(row))}
+                        aria-label={`Select ${getRowLabel ? getRowLabel(row) : `row ${getRowKey(row)}`}`}
+                      />
+                    </td>
+                  )}
                   {columns.map((col) => (
                     <td key={col.key} style={col.align ? { textAlign: col.align } : undefined}>
                       {col.render ? col.render(row) : row[col.key]}

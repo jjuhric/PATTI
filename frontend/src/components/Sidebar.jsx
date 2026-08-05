@@ -1,5 +1,5 @@
-import React from 'react';
-import { MessageSquare, Plus, Edit2, X, Calendar, Settings, LogOut, Brain, Network, Send, Sliders, ShieldCheck, Sun, Moon } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { MessageSquare, Plus, Edit2, X, Calendar, Settings, LogOut, Brain, Network, Send, Sliders, ShieldCheck, Sun, Moon, Search, CheckSquare } from 'lucide-react';
 
 export default function Sidebar({
   user,
@@ -16,6 +16,7 @@ export default function Sidebar({
   setEditingTitle,
   createChat,
   deleteChat,
+  onBulkDeleteChats = () => {},
   handleRenameChat,
   handleLogout,
   setIsSettingsOpen,
@@ -23,9 +24,42 @@ export default function Sidebar({
   setIsEsp32ModalOpen,
   appVersion,
   theme,
-  toggleTheme
+  toggleTheme,
+  chatSearchQuery = '',
+  setChatSearchQuery = () => {},
+  chatSearchResults = [],
+  isSearchingChats = false,
+  onOpenSearchResult = () => {}
 }) {
+  const isSearching = chatSearchQuery.trim().length >= 2;
   const isLight = theme === 'light' || (!theme && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+
+  // FEAT-3 (docs/REVIEW_2026-08-03.md): bulk delete for chats, behind a "Select" mode toggle -
+  // the list is too narrow to show a permanent checkbox column without crowding the existing
+  // rename/delete icons, so it's opt-in instead of always-on like the AdminDashboard tables.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedChatIds, setSelectedChatIds] = useState(() => new Set());
+  useEffect(() => {
+    setSelectedChatIds((prev) => {
+      if (prev.size === 0) return prev;
+      const validIds = new Set(chats.map((c) => c.id));
+      const next = new Set([...prev].filter((id) => validIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [chats]);
+  const toggleSelectChat = (id) => {
+    setSelectedChatIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedChatIds(new Set());
+  };
+
   return (
     <aside className={`sidebar ${isMobileSidebarOpen ? 'mobile-open' : ''}`}>
       <div className="sidebar-header">
@@ -56,8 +90,86 @@ export default function Sidebar({
         <span>New Chat</span>
       </button>
 
+      <div className="sidebar-search">
+        <Search size={14} className="sidebar-search-icon" />
+        <input
+          type="text"
+          className="form-control"
+          placeholder="Search chats..."
+          value={chatSearchQuery}
+          onChange={(e) => setChatSearchQuery(e.target.value)}
+          aria-label="Search chat history"
+        />
+        {chatSearchQuery && (
+          <button
+            className="sidebar-search-clear"
+            onClick={() => setChatSearchQuery('')}
+            aria-label="Clear search"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
+      {!isSearching && chats.length > 0 && (
+        <div className="sidebar-select-bar">
+          {selectMode ? (
+            <>
+              <span className="sidebar-select-count">{selectedChatIds.size} selected</span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm text-error"
+                disabled={selectedChatIds.size === 0}
+                onClick={() => onBulkDeleteChats([...selectedChatIds], () => setSelectedChatIds(new Set()))}
+              >
+                Delete
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={exitSelectMode}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button type="button" className="sidebar-select-toggle" onClick={() => setSelectMode(true)}>
+              <CheckSquare size={13} /> Select chats
+            </button>
+          )}
+        </div>
+      )}
+
       <nav className="chat-list">
-        {chats.map(chat => (
+        {isSearching ? (
+          isSearchingChats ? (
+            <div className="sidebar-search-status">Searching…</div>
+          ) : chatSearchResults.length === 0 ? (
+            <div className="sidebar-search-status">No chats found for "{chatSearchQuery.trim()}".</div>
+          ) : (
+            chatSearchResults.map((result) => (
+              <div
+                key={result.chatId}
+                className="chat-item chat-search-result"
+                role="button"
+                tabIndex={0}
+                aria-label={`Open chat "${result.title}"`}
+                onClick={() => onOpenSearchResult(result.chatId)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onOpenSearchResult(result.chatId);
+                  }
+                }}
+              >
+                <MessageSquare size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+                <div style={{ flex: 1, overflow: 'hidden', marginLeft: '6px' }}>
+                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{result.title}</div>
+                  {result.snippet && (
+                    <div className="chat-search-snippet">{result.snippet}</div>
+                  )}
+                </div>
+              </div>
+            ))
+          )
+        ) : (
+        chats.map(chat => (
           <div
             key={chat.id}
             className={`chat-item ${activeChatId === chat.id ? 'active' : ''}`}
@@ -66,21 +178,37 @@ export default function Sidebar({
             aria-current={activeChatId === chat.id ? 'true' : undefined}
             aria-label={`Open chat "${chat.title}"`}
             onClick={() => {
-              if (editingChatId !== chat.id) {
-                setActiveChatId(chat.id);
-                setActiveTab('chat');
-                setIsMobileSidebarOpen(false);
+              if (editingChatId === chat.id) return;
+              if (selectMode) {
+                toggleSelectChat(chat.id);
+                return;
               }
+              setActiveChatId(chat.id);
+              setActiveTab('chat');
+              setIsMobileSidebarOpen(false);
             }}
             onKeyDown={(e) => {
-              if ((e.key === 'Enter' || e.key === ' ') && editingChatId !== chat.id) {
-                e.preventDefault();
-                setActiveChatId(chat.id);
-                setActiveTab('chat');
-                setIsMobileSidebarOpen(false);
+              if (editingChatId === chat.id || !(e.key === 'Enter' || e.key === ' ')) return;
+              e.preventDefault();
+              if (selectMode) {
+                toggleSelectChat(chat.id);
+                return;
               }
+              setActiveChatId(chat.id);
+              setActiveTab('chat');
+              setIsMobileSidebarOpen(false);
             }}
           >
+            {selectMode && (
+              <input
+                type="checkbox"
+                checked={selectedChatIds.has(chat.id)}
+                onChange={() => toggleSelectChat(chat.id)}
+                onClick={(e) => e.stopPropagation()}
+                aria-label={`Select chat "${chat.title}"`}
+                style={{ flexShrink: 0, marginRight: '8px' }}
+              />
+            )}
             <MessageSquare size={16} style={{ flexShrink: 0 }} />
             {editingChatId === chat.id ? (
               <input
@@ -111,30 +239,33 @@ export default function Sidebar({
                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginLeft: '6px' }}>
                   {chat.title}
                 </span>
-                <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingChatId(chat.id);
-                      setEditingTitle(chat.title);
-                    }}
-                    style={{ padding: '2px' }}
-                    aria-label={`Rename chat "${chat.title}"`}
-                  >
-                    <Edit2 size={12} />
-                  </button>
-                  <button
-                    onClick={(e) => deleteChat(chat.id, e)}
-                    style={{ padding: '2px' }}
-                    aria-label={`Delete chat "${chat.title}"`}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
+                {!selectMode && (
+                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingChatId(chat.id);
+                        setEditingTitle(chat.title);
+                      }}
+                      style={{ padding: '2px' }}
+                      aria-label={`Rename chat "${chat.title}"`}
+                    >
+                      <Edit2 size={12} />
+                    </button>
+                    <button
+                      onClick={(e) => deleteChat(chat.id, e)}
+                      style={{ padding: '2px' }}
+                      aria-label={`Delete chat "${chat.title}"`}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
-        ))}
+        ))
+        )}
       </nav>
 
       <div className="sidebar-footer" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
