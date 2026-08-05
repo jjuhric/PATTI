@@ -12,6 +12,12 @@ jest.mock('../tools/web_search_tool', () => ({
   performWebSearch: jest.fn()
 }));
 
+// The SSRF guard (SEC-4) does a real DNS lookup, which these tests must not depend on - see
+// the identical mock/rationale in tests/web_search_tool.test.js.
+jest.mock('../utils/ssrfGuard', () => ({
+  assertPublicHttpUrl: jest.fn(async (url) => new URL(url))
+}));
+
 const {
   searchResearchedKnowledge,
   storeResearchedKnowledge,

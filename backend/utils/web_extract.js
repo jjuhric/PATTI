@@ -1,5 +1,6 @@
 const cheerio = require('cheerio');
 const { generateText } = require('./llm_text');
+const { assertPublicHttpUrl } = require('./ssrfGuard');
 
 // Cleaned page text handed to the LLM. ~12k characters is roughly 3k tokens, which leaves
 // plenty of room inside the 32768-token local context for the system prompt and the answer.
@@ -57,6 +58,12 @@ function selectMainContent($) {
  * rather than treating an error page as content.
  */
 async function fetchPageText(url, { timeoutMs = FETCH_TIMEOUT_MS } = {}) {
+  try {
+    await assertPublicHttpUrl(url);
+  } catch (err) {
+    return { url, ok: false, error: err.message };
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {

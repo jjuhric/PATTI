@@ -5,6 +5,7 @@ const {
   buildHeaders,
   buildBody,
   buildStreamBody,
+  buildAnthropicSystem,
   extractResponseText,
   resolveModelName,
   LM_STUDIO_NUM_CTX
@@ -156,6 +157,39 @@ describe('buildBody', () => {
     expect(body.max_tokens).toBeUndefined();
   });
 
+  // ENH-3 (docs/REVIEW_2026-08-03.md): prompt caching
+  test('anthropic style with a matching cacheableSystemPrefix splits system into cached + uncached blocks', () => {
+    const body = buildBody({
+      ...base,
+      targetStyle: 'anthropic',
+      provider: 'online',
+      systemText: 'BASE PROMPT.per-turn context here',
+      maxTokensOnline: 1024,
+      cacheableSystemPrefix: 'BASE PROMPT.'
+    });
+    expect(body.system).toEqual([
+      { type: 'text', text: 'BASE PROMPT.', cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: 'per-turn context here' }
+    ]);
+  });
+
+  test('anthropic style with a non-matching cacheableSystemPrefix falls back to a plain string', () => {
+    const body = buildBody({
+      ...base,
+      targetStyle: 'anthropic',
+      provider: 'online',
+      systemText: 'sys',
+      maxTokensOnline: 1024,
+      cacheableSystemPrefix: 'this is not a prefix of systemText'
+    });
+    expect(body.system).toBe('sys');
+  });
+
+  test('cacheableSystemPrefix is ignored for non-anthropic styles', () => {
+    const body = buildBody({ ...base, cacheableSystemPrefix: 'sys' });
+    expect(body.messages[0]).toEqual({ role: 'system', content: 'sys' });
+  });
+
   test('local-gemini style uses system_prompt/input, not a messages array', () => {
     const body = buildBody({ ...base, targetStyle: 'local-gemini' });
     expect(body).toEqual({ model: 'test-model', system_prompt: 'sys', input: 'user msg' });
@@ -219,10 +253,55 @@ describe('buildStreamBody', () => {
     expect(body.system).toBeUndefined();
   });
 
+  test('anthropic streaming style also splits system into cached + uncached blocks when a matching prefix is given', () => {
+    const body = buildStreamBody({
+      targetStyle: 'anthropic',
+      modelName: 'm',
+      messages: [{ role: 'system', content: 'BASE.dynamic bit' }, { role: 'user', content: 'hi' }],
+      cacheableSystemPrefix: 'BASE.'
+    });
+    expect(body.system).toEqual([
+      { type: 'text', text: 'BASE.', cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: 'dynamic bit' }
+    ]);
+  });
+
   test('local-gemini style flattens history into a single conversation string', () => {
     const body = buildStreamBody({ targetStyle: 'local-gemini', modelName: 'm', messages });
     expect(body.system_prompt).toBe('sys');
     expect(body.input).toBe('User: hi\nAssistant: hello');
+  });
+});
+
+// ENH-3 (docs/REVIEW_2026-08-03.md)
+describe('buildAnthropicSystem', () => {
+  test('returns the plain string when no prefix is given', () => {
+    expect(buildAnthropicSystem('full system text', undefined)).toBe('full system text');
+  });
+
+  test('returns the plain string when the prefix is empty', () => {
+    expect(buildAnthropicSystem('full system text', '')).toBe('full system text');
+  });
+
+  test('returns the plain string when the prefix does not actually match the start of systemText', () => {
+    expect(buildAnthropicSystem('full system text', 'WRONG PREFIX')).toBe('full system text');
+  });
+
+  test('splits into a cached prefix block and an uncached remainder block', () => {
+    expect(buildAnthropicSystem('STATIC.dynamic', 'STATIC.')).toEqual([
+      { type: 'text', text: 'STATIC.', cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: 'dynamic' }
+    ]);
+  });
+
+  test('omits the remainder block when the prefix is the entire text', () => {
+    expect(buildAnthropicSystem('STATIC ONLY', 'STATIC ONLY')).toEqual([
+      { type: 'text', text: 'STATIC ONLY', cache_control: { type: 'ephemeral' } }
+    ]);
+  });
+
+  test('handles an empty systemText without throwing', () => {
+    expect(buildAnthropicSystem('', 'anything')).toBe('');
   });
 });
 

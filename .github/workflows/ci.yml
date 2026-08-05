@@ -7,6 +7,25 @@ on:
     branches: [main]
 
 jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install Project Dependencies
+        run: npm run install:all
+      - name: Audit root dependencies (high severity and above)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Audit backend dependencies (high severity and above)
+        run: npm audit --omit=dev --audit-level=high --prefix backend
+      - name: Audit frontend dependencies (high severity and above)
+        run: npm audit --omit=dev --audit-level=high --prefix frontend
+
   backend-tests:
     runs-on: ubuntu-latest
     steps:

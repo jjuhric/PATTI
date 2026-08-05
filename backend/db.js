@@ -74,6 +74,13 @@ async function getDb() {
     if (!columns.some(col => col.name === 'is_admin')) {
       await dbConnection.run('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
     }
+    // Revocation cutoff for SEC-5 (docs/REVIEW_2026-08-03.md): a JWT issued before this
+    // timestamp is treated as invalid, regardless of its own expiry. Lets a leaked/stolen
+    // 30-day token be killed on demand via POST /api/auth/logout-everywhere instead of having
+    // no revocation path at all.
+    if (!columns.some(col => col.name === 'tokens_valid_after')) {
+      await dbConnection.run('ALTER TABLE users ADD COLUMN tokens_valid_after DATETIME');
+    }
 
     // Migrate user_settings to add local_key column if missing
     const settingsColumns = await dbConnection.all('PRAGMA table_info(user_settings)');
@@ -136,6 +143,20 @@ async function getDb() {
     const messagesColumns = await dbConnection.all('PRAGMA table_info(messages)');
     if (!messagesColumns.some(col => col.name === 'is_error')) {
       await dbConnection.run('ALTER TABLE messages ADD COLUMN is_error INTEGER DEFAULT 0');
+    }
+    // BUG-13 (docs/REVIEW_2026-08-03.md): which worker agent(s) (if any) were delegated to for
+    // this assistant turn, as a JSON array of canonical agent names - captured live from
+    // onAgentStatus events in routes/chat.js. subtask_results (the richer per-subtask record)
+    // is deleted at the end of every turn as scratchpad cleanup, so this is the only attribution
+    // that survives into the next turn, where feedback_learning.js needs it.
+    if (!messagesColumns.some(col => col.name === 'agents_used')) {
+      await dbConnection.run('ALTER TABLE messages ADD COLUMN agents_used TEXT');
+    }
+
+    // ENH-4 (docs/REVIEW_2026-08-03.md): full Supervisor decision object per subtask_results row.
+    const subtaskResultsColumns = await dbConnection.all('PRAGMA table_info(subtask_results)');
+    if (!subtaskResultsColumns.some(col => col.name === 'decision_json')) {
+      await dbConnection.run('ALTER TABLE subtask_results ADD COLUMN decision_json TEXT');
     }
 
     // Migrate memories to add embedding column if missing

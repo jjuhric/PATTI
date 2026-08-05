@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const os = require('os');
 const { authenticateToken } = require('../middleware/auth');
+const { requireAdmin } = require('../middleware/adminAuth');
 const { handleHostMachineTool } = require('../tools/host_machine_tool');
 const { getDb } = require('../db');
 
@@ -49,8 +50,8 @@ router.get('/status', authenticateToken, async (req, res) => {
   }
 });
 
-// Restart systemd service
-router.post('/service/restart', authenticateToken, async (req, res) => {
+// Restart systemd service - admin only: this runs a real shell command on the host.
+router.post('/service/restart', authenticateToken, requireAdmin, async (req, res) => {
   const { service } = req.body;
   if (!service) return res.status(400).json({ error: 'Service name is required' });
   
@@ -66,8 +67,8 @@ router.post('/service/restart', authenticateToken, async (req, res) => {
   }
 });
 
-// Trigger GPIO script execution
-router.post('/gpio/run', authenticateToken, async (req, res) => {
+// Trigger GPIO script execution - admin only: this executes an arbitrary script on the host.
+router.post('/gpio/run', authenticateToken, requireAdmin, async (req, res) => {
   const { scriptPath } = req.body;
   if (!scriptPath) return res.status(400).json({ error: 'scriptPath is required' });
 

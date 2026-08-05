@@ -40,6 +40,37 @@ router.get('/users', async (req, res) => {
   }
 });
 
+// Create a new user account directly - the admin-run alternative to the public
+// invite-code-gated /api/auth/register flow (see SEC-8 in docs/REVIEW_2026-08-03.md).
+router.post('/users', async (req, res) => {
+  const { username, password, is_admin } = req.body;
+  if (!username || !password || username.trim() === '' || password.length < 4) {
+    return res.status(400).json({ error: 'Username and password (min 4 characters) are required.' });
+  }
+  try {
+    const db = await getDb();
+    const existing = await db.get('SELECT id FROM users WHERE username = ?', [username.trim()]);
+    if (existing) return res.status(400).json({ error: 'Username is already taken.' });
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+    const makeAdmin = is_admin === true || is_admin === 1 || is_admin === '1';
+
+    const result = await db.run(
+      'INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)',
+      [username.trim(), passwordHash, makeAdmin ? 1 : 0]
+    );
+    await db.run(
+      'INSERT INTO user_settings (user_id, provider, model_name) VALUES (?, ?, ?)',
+      [result.lastID, 'local', 'qwen2.5-coder-7b-instruct']
+    );
+
+    res.json({ success: true, userId: result.lastID });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Update a specific user's token quota
 router.put('/users/:userId/quota', async (req, res) => {
   const { userId } = req.params;

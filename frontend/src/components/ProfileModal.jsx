@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Eye, EyeOff, Plus } from 'lucide-react';
+import { X, Eye, EyeOff, Plus, ShieldAlert } from 'lucide-react';
 
 export default function ProfileModal({
   isProfileOpen,
@@ -9,9 +9,11 @@ export default function ProfileModal({
   settings,
   saveSettings,
   localModels = [],
-  onlineModels = []
+  onlineModels = [],
+  onLogoutEverywhere
 }) {
-  const [activeTab, setActiveTab] = useState('general'); // 'general', 'models', 'personal'
+  const [activeTab, setActiveTab] = useState('general'); // 'general', 'models', 'personal', 'security'
+  const [loggingOutEverywhere, setLoggingOutEverywhere] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     zipcode: '',
@@ -113,6 +115,17 @@ export default function ProfileModal({
     }));
   };
 
+  const handleLogoutEverywhereClick = async () => {
+    if (!onLogoutEverywhere) return;
+    if (!window.confirm('This logs out every device signed in to your account, including this one. Continue?')) return;
+    setLoggingOutEverywhere(true);
+    try {
+      await onLogoutEverywhere();
+    } finally {
+      setLoggingOutEverywhere(false);
+    }
+  };
+
   return (
     <div className="modal-overlay" onClick={() => setIsProfileOpen(false)}>
       <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '520px', width: '90%' }}>
@@ -172,6 +185,22 @@ export default function ProfileModal({
             }}
           >
             Personalization
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('security')}
+            style={{
+              padding: '10px 16px',
+              background: 'none',
+              border: 'none',
+              borderBottom: activeTab === 'security' ? '2px solid var(--accent-primary)' : '2px solid transparent',
+              color: activeTab === 'security' ? '#fff' : 'var(--text-secondary)',
+              fontWeight: activeTab === 'security' ? 600 : 400,
+              cursor: 'pointer',
+              fontSize: '0.85rem'
+            }}
+          >
+            Security
           </button>
         </div>
 
@@ -422,11 +451,36 @@ export default function ProfileModal({
             </div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px', marginTop: '8px' }}>
-            <button type="submit" className="btn btn-primary" style={{ padding: '8px 20px' }}>
-              Save Profile
-            </button>
-          </div>
+          {activeTab === 'security' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Sessions</label>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0 0 10px' }}>
+                  If you think your login link or session was shared or leaked, log out every
+                  device signed in to your account - including this one. You'll need to log back
+                  in here afterward.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={loggingOutEverywhere}
+                  onClick={handleLogoutEverywhereClick}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 8, color: 'var(--error, #e5484d)' }}
+                >
+                  <ShieldAlert size={16} />
+                  {loggingOutEverywhere ? 'Logging out everywhere...' : 'Log out everywhere'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeTab !== 'security' && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px', marginTop: '8px' }}>
+              <button type="submit" className="btn btn-primary" style={{ padding: '8px 20px' }}>
+                Save Profile
+              </button>
+            </div>
+          )}
         </form>
       </div>
     </div>

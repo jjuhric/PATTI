@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 
+// BUG-6 (docs/REVIEW_2026-08-03.md): a long-lived SSE connection must never let logs grow
+// unbounded - applied uniformly to every setLogs call, not just the main stream handler.
+const MAX_LOG_LINES = 400;
+
 export default function LMStudioLogsView({ token }) {
   const [logs, setLogs] = useState([]);
   const [status, setStatus] = useState('connecting');
@@ -35,7 +39,7 @@ export default function LMStudioLogsView({ token }) {
             eventSourceRef.current = null;
           }
           setStatus('disconnected');
-          setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type: 'system', text: 'Live log stream stopped by user request.' }]);
+          setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type: 'system', text: 'Live log stream stopped by user request.' }].slice(-MAX_LOG_LINES));
         }
       }
     });
@@ -79,7 +83,7 @@ export default function LMStudioLogsView({ token }) {
       });
       if (res.ok) {
         const data = await res.json();
-        setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type: 'system', text: `Success: ${data.message || 'Model ejected.'}` }]);
+        setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type: 'system', text: `Success: ${data.message || 'Model ejected.'}` }].slice(-MAX_LOG_LINES));
         alert(data.message || 'Model ejected successfully.');
       } else {
         const data = await res.json();
@@ -97,7 +101,7 @@ export default function LMStudioLogsView({ token }) {
 
     eventSource.onopen = () => {
       setStatus('connected');
-      setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type: 'system', text: 'Live log stream connection established.' }]);
+      setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type: 'system', text: 'Live log stream connection established.' }].slice(-MAX_LOG_LINES));
     };
 
     eventSource.onmessage = (event) => {
@@ -120,7 +124,7 @@ export default function LMStudioLogsView({ token }) {
             rawText: logText,
             parsed: parsedMessage
           }];
-          return newLogs.slice(-400); // cap at 400 lines
+          return newLogs.slice(-MAX_LOG_LINES);
         });
       } catch (err) {
         console.error('Failed to parse SSE message:', err);
@@ -130,7 +134,7 @@ export default function LMStudioLogsView({ token }) {
     eventSource.onerror = () => {
       if (!eventSourceRef.current) return;
       setStatus('disconnected');
-      setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type: 'error', text: 'Connection lost. Reconnecting...' }]);
+      setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), type: 'error', text: 'Connection lost. Reconnecting...' }].slice(-MAX_LOG_LINES));
     };
 
     return () => {

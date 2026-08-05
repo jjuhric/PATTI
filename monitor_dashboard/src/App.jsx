@@ -1,138 +1,46 @@
 import React, { useState, useEffect } from 'react';
-import { Network, FileText, Upload, Trash2, Cpu, Eye, CheckCircle, RefreshCw, Layers, Plus, Server, Monitor, Search, BookOpen, X, BarChart2, Cloud, Code, Shield, Wrench, UserPlus, Calendar, ChevronLeft, ChevronRight, Trophy, Newspaper, Clapperboard, Microscope, Telescope, GraduationCap, FilePlus, FileEdit } from 'lucide-react';
+import { Network, FileText, Upload, Trash2, Cpu, Eye, CheckCircle, RefreshCw, Layers, Plus, Server, Monitor, Search, BookOpen, X, BarChart2, Cloud, Code, Shield, Wrench, UserPlus, Calendar, ChevronLeft, ChevronRight, Trophy, Newspaper, Clapperboard, Microscope, Telescope, GraduationCap, FilePlus, FileEdit, Bot, Clock, Palette } from 'lucide-react';
 import TokenCountView from './TokenCountView';
 import RpiTerminalModal from './RpiTerminalModal';
 import LMStudioLogsView from './LMStudioLogsView';
 import CustomAlertModal from './CustomAlertModal';
+import { useApi } from './useApi';
 
-const agents = [
-  {
-    type: 'communication_specialist',
-    name: 'Communication Specialist',
-    icon: RefreshCw,
-    desc: 'Primary contact for the user. Bubbly, warm, and welcomes the user. Translates requests into project ideas and formats final reports beautifully.'
-  },
-  {
-    type: 'supervisor',
-    name: 'Supervisor Agent',
-    icon: Network,
-    desc: 'Master orchestrator. Reads the full agent capability registry and routes every task to the best-suited specialist agent.'
-  },
-  {
-    type: 'weather',
-    name: 'Weather Expert',
-    icon: Cloud,
-    desc: 'Fetches current conditions, hourly forecasts, and daily weather data using your zipcode.'
-  },
-  {
-    type: 'system',
-    name: 'System Agent',
-    icon: Cpu,
-    desc: 'Queries local host: CPU, RAM, disk, temperature, processes, services, security scans, and scripting on the current machine only.'
-  },
-  {
-    type: 'node',
-    name: 'Node Agent',
-    icon: Server,
-    desc: 'Routes commands and queries to remote RPi or ESP32 field nodes. Cannot query Main Host from a remote context.'
-  },
-  {
-    type: 'memory',
-    name: 'Memory Agent',
-    icon: BookOpen,
-    desc: 'Stores, recalls, and forgets long-term and short-term memories about the user.'
-  },
-  {
-    type: 'calendar',
-    name: 'Calendar Agent',
-    icon: Calendar,
-    desc: 'Manages calendar events: listing, adding, or deleting scheduled events.'
-  },
-  {
-    type: 'crawler',
-    name: 'Web Searcher',
-    icon: Search,
-    desc: 'Performs live web searches and Google News lookups, aligning results with stored user interests.'
-  },
-  {
-    type: 'rag',
-    name: 'Document Vault Agent',
-    icon: FileText,
-    desc: 'Performs semantic vector search over uploaded private documents using cosine similarity.'
-  },
-  {
-    type: 'qa',
-    name: 'QA Engineer',
-    icon: Shield,
-    desc: 'Reviews code for bugs, vulnerabilities, and test coverage. Issues APPROVE or REJECT verdicts.'
-  },
-  {
-    type: 'tool_creator',
-    name: 'Tool Creation Agent',
-    icon: Wrench,
-    desc: 'Coordinates dynamic tool creation: designs plan, requests HITL approval, then implements and deploys.'
-  },
-  {
-    type: 'agent_creator',
-    name: 'Agent Creation Agent',
-    icon: UserPlus,
-    desc: 'Dynamically designs and integrates new specialist agents into the multi-agent loop.'
-  },
-  {
-    type: 'developer',
-    name: 'Developer Agent',
-    icon: Layers,
-    desc: 'Orchestrates software development pipelines, manages workspace files, writes source code, and deploys new custom tools.'
-  },
-  {
-    type: 'sports',
-    name: 'Sports Agent',
-    icon: Trophy,
-    desc: 'Gathers and tracks sports news, scores, highlights, or team articles from Bleacher Report, ensuring unseen stories are shown first.'
-  },
-  {
-    type: 'news',
-    name: 'News Agent',
-    icon: Newspaper,
-    desc: 'Gathers general news briefs from TMZ and performs randomized searches on user preference topics, evaluating accuracy results.'
-  },
-  {
-    type: 'movie_tv',
-    name: 'Movie & TV Agent',
-    icon: Clapperboard,
-    desc: 'Finds what is new on streaming, upcoming release dates, and where to watch a title, using The Movie Database plus Rotten Tomatoes and Reddit for reviews.'
-  },
-  {
-    type: 'deep_research',
-    name: 'Deep Research Agent',
-    icon: Microscope,
-    desc: 'Crawls multiple sources on a topic and grows PATTI\'s permanent shared knowledge base so repeat questions are answered faster.'
-  },
-  {
-    type: 'deep_research_pro',
-    name: 'Deep Research Pro',
-    icon: Telescope,
-    desc: 'Runs a long-form multi-source web investigation in the background, reporting back later in the Deep Research Results chat.'
-  },
-  {
-    type: 'course_builder',
-    name: 'Course Builder Agent',
-    icon: GraduationCap,
-    desc: 'Writes full multi-lesson courses and study guides with PATTI\'s own model, saving them to disk and reporting back in the Generated Courses chat.'
-  },
-  {
-    type: 'document_generator',
-    name: 'Document Generator',
-    icon: FilePlus,
-    desc: 'Produces downloadable PDF, Word, Excel, and PowerPoint files from generated content.'
-  },
-  {
-    type: 'document_formatter',
-    name: 'Document Formatter',
-    icon: FileEdit,
-    desc: 'Reformats an uploaded document into clean headings, tables, and code blocks, optionally adding illustrative images.'
-  }
-];
+// BUG-4 (docs/REVIEW_2026-08-03.md): the agent roster used to be a hand-maintained array here,
+// which already went stale once (six agents silently missing until added by hand) and had
+// drifted again by the time this was rewritten (automation_handler and graphics_engineer were
+// both missing). The roster itself now comes from GET /api/agents (FEAT-5), backed by the real
+// agent prompt files on disk - this map only supplies presentation (icon + description) for
+// agents this dashboard knows about, keyed by the same canonical name the backend uses. Any
+// agent not in this map still renders correctly with DEFAULT_AGENT_ICON and a generic
+// description, so a newly added backend agent needs zero frontend changes to show up.
+const AGENT_PRESENTATION = {
+  communication_specialist: { name: 'Communication Specialist', icon: RefreshCw, desc: 'Primary contact for the user. Bubbly, warm, and welcomes the user. Translates requests into project ideas and formats final reports beautifully.' },
+  supervisor: { name: 'Supervisor Agent', icon: Network, desc: 'Master orchestrator. Reads the full agent capability registry and routes every task to the best-suited specialist agent.' },
+  weather_expert: { name: 'Weather Expert', icon: Cloud, desc: 'Fetches current conditions, hourly forecasts, and daily weather data using your zipcode.' },
+  system_specialist: { name: 'System Agent', icon: Cpu, desc: 'Queries local host: CPU, RAM, disk, temperature, processes, services, security scans, and scripting on the current machine only.' },
+  node_agent: { name: 'Node Agent', icon: Server, desc: 'Routes commands and queries to remote RPi or ESP32 field nodes. Cannot query Main Host from a remote context.' },
+  memory_agent: { name: 'Memory Agent', icon: BookOpen, desc: 'Stores, recalls, and forgets long-term and short-term memories about the user.' },
+  calendar_handler: { name: 'Calendar Agent', icon: Calendar, desc: 'Manages calendar events: listing, adding, or deleting scheduled events.' },
+  web_searcher: { name: 'Web Searcher', icon: Search, desc: 'Performs live web searches and Google News lookups, aligning results with stored user interests.' },
+  document_vault: { name: 'Document Vault Agent', icon: FileText, desc: 'Performs semantic vector search over uploaded private documents using cosine similarity.' },
+  qa_engineer: { name: 'QA Engineer', icon: Shield, desc: 'Reviews code for bugs, vulnerabilities, and test coverage. Issues APPROVE or REJECT verdicts.' },
+  tool_creator_agent: { name: 'Tool Creation Agent', icon: Wrench, desc: 'Coordinates dynamic tool creation: designs plan, requests HITL approval, then implements and deploys.' },
+  agent_creator_agent: { name: 'Agent Creation Agent', icon: UserPlus, desc: 'Dynamically designs and integrates new specialist agents into the multi-agent loop.' },
+  developer_agent: { name: 'Developer Agent', icon: Layers, desc: 'Orchestrates software development pipelines, manages workspace files, writes source code, and deploys new custom tools.' },
+  sports_agent: { name: 'Sports Agent', icon: Trophy, desc: 'Gathers and tracks sports news, scores, highlights, or team articles from Bleacher Report, ensuring unseen stories are shown first.' },
+  news_agent: { name: 'News Agent', icon: Newspaper, desc: 'Gathers general news briefs from TMZ and performs randomized searches on user preference topics, evaluating accuracy results.' },
+  movie_tv_agent: { name: 'Movie & TV Agent', icon: Clapperboard, desc: 'Finds what is new on streaming, upcoming release dates, and where to watch a title, using The Movie Database plus Rotten Tomatoes and Reddit for reviews.' },
+  deep_research_agent: { name: 'Deep Research Agent', icon: Microscope, desc: 'Crawls multiple sources on a topic and grows PATTI\'s permanent shared knowledge base so repeat questions are answered faster.' },
+  deep_research_pro_agent: { name: 'Deep Research Pro', icon: Telescope, desc: 'Runs a long-form multi-source web investigation in the background, reporting back later in the Deep Research Results chat.' },
+  course_builder_agent: { name: 'Course Builder Agent', icon: GraduationCap, desc: 'Writes full multi-lesson courses and study guides with PATTI\'s own model, saving them to disk and reporting back in the Generated Courses chat.' },
+  document_generator_agent: { name: 'Document Generator', icon: FilePlus, desc: 'Produces downloadable PDF, Word, Excel, and PowerPoint files from generated content.' },
+  document_formatter_agent: { name: 'Document Formatter', icon: FileEdit, desc: 'Reformats an uploaded document into clean headings, tables, and code blocks, optionally adding illustrative images.' },
+  automation_handler: { name: 'Automation Handler', icon: Clock, desc: 'Sets up, lists, pauses, resumes, or cancels recurring automated requests running on a schedule.' },
+  graphics_engineer: { name: 'Graphics Engineer', icon: Palette, desc: 'Authors SVG graphics and sources/edits real photographic images for icons, badges, and illustrations.' }
+};
+const DEFAULT_AGENT_ICON = Bot;
+const DEFAULT_AGENT_DESC = 'A specialist agent available to the Supervisor.';
 
 export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAgent, isStreaming: propIsStreaming }) {
   const [localActiveAgent, setLocalActiveAgent] = useState(null);
@@ -144,8 +52,11 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
   const toolLogs = propToolLogs !== undefined ? propToolLogs : localToolLogs;
 
   const [token, setToken] = useState(localStorage.getItem('main_host_token') || '');
+  const api = useApi(token);
   const [hostUrl, setHostUrl] = useState(localStorage.getItem('main_host_url') || '');
   const [settings, setSettings] = useState(null);
+  // BUG-4/FEAT-5: fetched from the backend instead of hardcoded - see AGENT_PRESENTATION above.
+  const [agents, setAgents] = useState([]);
   const [configMode, setConfigMode] = useState(!token || !hostUrl);
   const [inputUrl, setInputUrl] = useState(hostUrl || 'http://localhost:3000');
   const [inputToken, setInputToken] = useState(token);
@@ -272,17 +183,40 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
 
   useEffect(() => {
     if (!token || !hostUrl) return;
-    fetch('/api/settings', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    })
-    .then(res => res.json())
-    .then(data => setSettings(data))
-    .catch(err => console.error('Failed to load settings:', err));
+    api.get('/api/settings').then(({ ok, data, error }) => {
+      if (ok) setSettings(data);
+      else console.error('Failed to load settings:', error);
+    });
+  }, [token, hostUrl]);
+
+  // BUG-4/FEAT-5: the real, current agent roster - merges each entry's canonical name/
+  // displayName from the backend with local presentation (icon/description), falling back to a
+  // generic icon/description for any agent this dashboard doesn't have presentation data for.
+  useEffect(() => {
+    if (!token || !hostUrl) return;
+    api.get('/api/agents').then(({ ok, data, error }) => {
+      if (!ok) {
+        console.error('Failed to load agent roster:', error);
+        return;
+      }
+      const list = (data.agents || []).map(a => {
+        const presentation = AGENT_PRESENTATION[a.name];
+        return {
+          type: a.name,
+          name: presentation?.name || a.displayName,
+          icon: presentation?.icon || DEFAULT_AGENT_ICON,
+          desc: presentation?.desc || DEFAULT_AGENT_DESC
+        };
+      });
+      setAgents(list);
+    });
   }, [token, hostUrl]);
 
   const handleConnect = async (e) => {
     e.preventDefault();
     setTestStatus('Connecting...');
+    // Not migrated to useApi(): this tests a candidate URL/token the user just typed into the
+    // connect form, not the app's own stored `token` state that useApi is bound to.
     try {
       const formattedUrl = inputUrl.replace(/\/$/, '');
       const res = await fetch(`${formattedUrl}/api/host/status`, {
@@ -321,16 +255,11 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
 
 
   const performNodeHealthPoll = async (configuredNodes) => {
-    try {
-      const res = await fetch('/api/nodes/health-check', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setNodeHealthMap(data);
-      }
-    } catch (err) {
-      console.error('Failed to poll node health:', err);
+    const { ok, data, error } = await api.get('/api/nodes/health-check');
+    if (ok) {
+      setNodeHealthMap(data);
+    } else {
+      console.error('Failed to poll node health:', error);
     }
   };
 
@@ -338,22 +267,13 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
   const handleScanNodes = async () => {
     setScanning(true);
     setDiscoveredNodes([]);
-    try {
-      const res = await fetch('/api/nodes/scan', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setDiscoveredNodes(data.nodes || []);
-      } else {
-        alert('Failed to scan local network.');
-      }
-    } catch (err) {
-      alert(`Error scanning network: ${err.message}`);
-    } finally {
-      setScanning(false);
+    const { ok, data } = await api.post('/api/nodes/scan');
+    if (ok) {
+      setDiscoveredNodes(data.nodes || []);
+    } else {
+      alert('Failed to scan local network.');
     }
+    setScanning(false);
   };
 
 
@@ -361,22 +281,13 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
   const handleConfirmRegisterNode = async (e) => {
     if (e) e.preventDefault();
     if (!registeringNode) return;
-    try {
-      const res = await fetch('/api/nodes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(registeringNode)
-      });
-      if (res.ok) {
-        fetchNodes();
-        setDiscoveredNodes(prev => prev.filter(n => n.ip_address !== registeringNode.ip_address));
-        setRegisteringNode(null);
-      } else {
-        const data = await res.json();
-        alert(`Failed to register discovered node: ${data.error}`);
-      }
-    } catch (err) {
-      alert(`Error registering node: ${err.message}`);
+    const { ok, data, error } = await api.post('/api/nodes', registeringNode);
+    if (ok) {
+      fetchNodes();
+      setDiscoveredNodes(prev => prev.filter(n => n.ip_address !== registeringNode.ip_address));
+      setRegisteringNode(null);
+    } else {
+      alert(`Failed to register discovered node: ${(data && data.error) || error}`);
     }
   };
 
@@ -467,43 +378,24 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
 
   const fetchNodes = async (runScan = false) => {
     if (runScan) setScanning(true);
-    try {
-      let res;
-      if (runScan) {
-        res = await fetch('/api/nodes/sync', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-      } else {
-        res = await fetch('/api/nodes', { headers: { 'Authorization': `Bearer ${token}` } });
-      }
-      if (res.ok) {
-        const data = await res.json();
-        setNodes(Array.isArray(data) ? data : (data.nodes || []));
-      }
-    } catch (err) {
-      console.error('Failed to fetch nodes:', err);
-    } finally {
-      if (runScan) setScanning(false);
+    const { ok, data, error } = runScan ? await api.post('/api/nodes/sync') : await api.get('/api/nodes');
+    if (ok) {
+      setNodes(Array.isArray(data) ? data : (data.nodes || []));
+    } else {
+      console.error('Failed to fetch nodes:', error);
     }
+    if (runScan) setScanning(false);
   };
   const handleAddNode = async (e) => {
     e.preventDefault();
-    try {
-      const res = await fetch('/api/nodes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(newNode)
-      });
-      if (res.ok) {
-        setNewNode({ node_name: '', device_type: 'rpi-5-8gb', ip_address: '', port: 3000, bridge_secret: '', mqtt_topic: '' });
-        setShowAddNode(false);
-        fetchNodes();
-      } else {
-        const data = await res.json();
-        alert(`Failed to add node: ${data.error}`);
-      }
-    } catch (err) { alert(`Error adding node: ${err.message}`); }
+    const { ok, data, error } = await api.post('/api/nodes', newNode);
+    if (ok) {
+      setNewNode({ node_name: '', device_type: 'rpi-5-8gb', ip_address: '', port: 3000, bridge_secret: '', mqtt_topic: '' });
+      setShowAddNode(false);
+      fetchNodes();
+    } else {
+      alert(`Failed to add node: ${(data && data.error) || error}`);
+    }
   };
 
   const handleDeleteNode = (id) => {
@@ -512,57 +404,33 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
       title: 'P.A.T.T.I.',
       message: 'Remove this field node?',
       onConfirm: async () => {
-        try {
-          const res = await fetch(`/api/nodes/${id}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (res.ok) fetchNodes();
-        } catch (err) { alert(`Error deleting node: ${err.message}`); }
+        const { ok } = await api.delete(`/api/nodes/${id}`);
+        if (ok) fetchNodes();
       }
     });
   };
 
   const fetchHostStatus = async () => {
     setLoadingHost(true);
-    try {
-      const res = await fetch('/api/host/status', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setHostStatus(data);
-      }
-    } catch (err) {
-      console.error('Failed to fetch host status:', err);
-    } finally {
-      setLoadingHost(false);
+    const { ok, data, error } = await api.get('/api/host/status');
+    if (ok) {
+      setHostStatus(data);
+    } else {
+      console.error('Failed to fetch host status:', error);
     }
+    setLoadingHost(false);
   };
 
   const handleRestartService = async () => {
     if (!restartServiceName.trim()) return;
     setRestartingService(true);
-    try {
-      const res = await fetch('/api/host/service/restart', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ service: restartServiceName })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        alert(data.message || 'Service restart initiated.');
-      } else {
-        alert(`Failed to restart service: ${data.error}`);
-      }
-    } catch (err) {
-      alert(`Error restarting service: ${err.message}`);
-    } finally {
-      setRestartingService(false);
+    const { ok, data, error } = await api.post('/api/host/service/restart', { service: restartServiceName });
+    if (ok) {
+      alert((data && data.message) || 'Service restart initiated.');
+    } else {
+      alert(`Failed to restart service: ${(data && data.error) || error}`);
     }
+    setRestartingService(false);
   };
 
 
@@ -572,16 +440,11 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
   }, []);
 
   const fetchDocuments = async () => {
-    try {
-      const res = await fetch('/api/vault', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setDocuments(data);
-      }
-    } catch (err) {
-      console.error('Failed to fetch documents:', err);
+    const { ok, data, error } = await api.get('/api/vault');
+    if (ok) {
+      setDocuments(data);
+    } else {
+      console.error('Failed to fetch documents:', error);
     }
   };
 
@@ -594,29 +457,15 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
     setUploadError('');
     setIsUploading(true);
 
-    try {
-      const res = await fetch('/api/vault', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ filename: fileName, content: fileContent })
-      });
-      
-      const data = await res.json();
-      if (res.ok) {
-        setFileName('');
-        setFileContent('');
-        fetchDocuments();
-      } else {
-        setUploadError(data.error || 'Failed to upload document.');
-      }
-    } catch (err) {
-      setUploadError('Connection error while uploading.');
-    } finally {
-      setIsUploading(false);
+    const { ok, data, error } = await api.post('/api/vault', { filename: fileName, content: fileContent });
+    if (ok) {
+      setFileName('');
+      setFileContent('');
+      fetchDocuments();
+    } else {
+      setUploadError((data && data.error) || error || 'Failed to upload document.');
     }
+    setIsUploading(false);
   };
 
   const handleDelete = (id) => {
@@ -625,16 +474,11 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
       title: 'P.A.T.T.I.',
       message: 'Are you sure you want to delete this document? This will remove all vector chunks from RAG memory.',
       onConfirm: async () => {
-        try {
-          const res = await fetch(`/api/vault/${id}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (res.ok) {
-            fetchDocuments();
-          }
-        } catch (err) {
-          console.error('Failed to delete document:', err);
+        const { ok, error } = await api.delete(`/api/vault/${id}`);
+        if (ok) {
+          fetchDocuments();
+        } else {
+          console.error('Failed to delete document:', error);
         }
       }
     });
@@ -651,67 +495,34 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
     reader.readAsText(file);
   };
 
+  // BUG-4 (docs/REVIEW_2026-08-03.md): replaced two ~20-branch hand-maintained matching chains
+  // (one per agent, easy to forget when adding a new agent) with one exact-match against the
+  // canonical name each agent is now identified by everywhere - agentType here is always a
+  // real backend/utils/agents/<name>.js filename (from GET /api/agents), and the backend
+  // itself reports that same canonical name via onAgentStatus/onToolCall
+  // (backend/services/agent_loop.js: `agentName = decision.tool.replace('delegate_to_', '')`).
+  // This deliberately drops the old chains' extra tool-level aliases (e.g. 'developer' also
+  // matching 'read_file'/'write_file'/'execute_command') - those represented in-flight tool
+  // activity under a delegated agent, not the delegation event itself, and reintroducing that
+  // per-agent would recreate the exact hand-maintained-list problem this fix removes. The
+  // structured chain below (the more reliable signal) is unaffected in the common case.
   const getAgentStatus = (agentType) => {
     // When streaming is explicitly finished (false), all agents return to Idle
     if (isStreaming === false) return 'Idle';
 
-    // Heuristics based on real-time SSE thoughts
+    // Heuristic based on real-time SSE thoughts: does the canonical name (or its
+    // underscore-to-space form, e.g. "communication specialist") appear in the thought text.
     const thought = (aiState.thought || '').toLowerCase();
     if (aiState.isBusy && thought) {
-      if (agentType === 'communication_specialist' && (thought.includes('communication_specialist') || thought.includes('communication specialist') || thought.includes('translating request') || thought.includes('generating bubbly final response'))) return 'Active';
-      if (agentType === 'supervisor' && (thought.includes('supervisor') || thought.includes('deciding strategy') || thought.includes('generating final response'))) return 'Active';
-      if (agentType === 'weather' && (thought.includes('weather_expert') || thought.includes('weather expert') || thought.includes('weather'))) return 'Active';
-      if (agentType === 'memory' && (thought.includes('memory_agent') || thought.includes('memory expert') || thought.includes('memory'))) return 'Active';
-      if (agentType === 'calendar' && (thought.includes('calendar_handler') || thought.includes('calendar expert') || thought.includes('calendar'))) return 'Active';
-      if (agentType === 'crawler' && (thought.includes('web_searcher') || thought.includes('search_web') || thought.includes('web searcher'))) return 'Active';
-      if (agentType === 'rag' && (thought.includes('document_vault') || thought.includes('document vault') || thought.includes('rag'))) return 'Active';
-      if (agentType === 'qa' && (thought.includes('qa_engineer') || thought.includes('qa engineer') || thought.includes('qa_agent'))) return 'Active';
-      if (agentType === 'tool_creator' && (thought.includes('tool_creator') || thought.includes('tool creation'))) return 'Active';
-      if (agentType === 'agent_creator' && (thought.includes('agent_creator') || thought.includes('agent creation'))) return 'Active';
-      if (agentType === 'developer' && (thought.includes('developer_agent') || thought.includes('developer expert') || thought.includes('developer'))) return 'Active';
-      if (agentType === 'system' && (thought.includes('system_specialist') || thought.includes('system expert') || thought.includes('system_agent') || thought.includes('system agent'))) return 'Active';
-      if (agentType === 'node' && (thought.includes('node_agent') || thought.includes('node expert') || thought.includes('node agent'))) return 'Active';
-      if (agentType === 'sports' && (thought.includes('sports_agent') || thought.includes('sports expert') || thought.includes('sports'))) return 'Active';
-      if (agentType === 'news' && (thought.includes('news_agent') || thought.includes('news expert') || thought.includes('news'))) return 'Active';
-      if (agentType === 'movie_tv' && (thought.includes('movie_tv_agent') || thought.includes('movie & tv') || thought.includes('movie'))) return 'Active';
-      // "deep_research_pro_agent" does not contain "deep_research_agent", so these two stay
-      // distinct - but the pro check must not be written as a bare "deep_research" substring.
-      if (agentType === 'deep_research' && thought.includes('deep_research_agent')) return 'Active';
-      if (agentType === 'deep_research_pro' && thought.includes('deep_research_pro')) return 'Active';
-      if (agentType === 'course_builder' && (thought.includes('course_builder') || thought.includes('course builder'))) return 'Active';
-      if (agentType === 'document_generator' && (thought.includes('document_generator') || thought.includes('document generator'))) return 'Active';
-      if (agentType === 'document_formatter' && (thought.includes('document_formatter') || thought.includes('document formatter'))) return 'Active';
+      const spaced = agentType.replace(/_/g, ' ');
+      if (thought.includes(agentType) || thought.includes(spaced)) return 'Active';
     }
 
     let currentAgent = activeAgent || (toolLogs && toolLogs.length > 0 ? (toolLogs[toolLogs.length - 1].agent || toolLogs[toolLogs.length - 1].tool) : null) || (isStreaming ? 'supervisor' : null);
     if (!currentAgent) return 'Idle';
 
     currentAgent = currentAgent.toLowerCase().replace('delegate_to_', '');
-
-    if (agentType === 'communication_specialist' && (currentAgent === 'communication_specialist' || currentAgent === 'communication' || currentAgent === 'expert')) return 'Active';
-    if (agentType === 'supervisor' && currentAgent === 'supervisor') return 'Active';
-    if (agentType === 'memory' && (currentAgent === 'memory_agent' || currentAgent === 'memory')) return 'Active';
-    if (agentType === 'calendar' && (currentAgent === 'calendar_handler' || currentAgent === 'calendar')) return 'Active';
-    if (agentType === 'crawler' && (currentAgent === 'web_searcher' || currentAgent === 'search_web' || currentAgent === 'google_news')) return 'Active';
-    if (agentType === 'rag' && (currentAgent === 'document_vault' || currentAgent === 'query_vault')) return 'Active';
-    if (agentType === 'dev' && (currentAgent === 'coder' || currentAgent === 'read_file' || currentAgent === 'write_file' || currentAgent === 'execute_command')) return 'Active';
-    if (agentType === 'tool_creator' && (currentAgent === 'tool_creator_agent' || currentAgent === 'tool_creator' || currentAgent === 'dev_pipeline')) return 'Active';
-    if (agentType === 'agent_creator' && (currentAgent === 'agent_creator_agent' || currentAgent === 'agent_creator')) return 'Active';
-    if (agentType === 'qa' && currentAgent === 'qa_engineer') return 'Active';
-    if (agentType === 'weather' && (currentAgent === 'weather_expert' || currentAgent === 'weather')) return 'Active';
-    if (agentType === 'system' && (currentAgent === 'system_specialist' || currentAgent === 'system' || currentAgent === 'host_machine')) return 'Active';
-    if (agentType === 'node' && (currentAgent === 'node_agent' || currentAgent === 'network_node' || currentAgent === 'list_network_nodes' || currentAgent === 'remote_node_bridge')) return 'Active';
-    if (agentType === 'developer' && (currentAgent === 'developer_agent' || currentAgent === 'developer' || currentAgent === 'dev_pipeline')) return 'Active';
-    if (agentType === 'sports' && (currentAgent === 'sports_agent' || currentAgent === 'sports')) return 'Active';
-    if (agentType === 'news' && (currentAgent === 'news_agent' || currentAgent === 'news')) return 'Active';
-    // Matches both the delegating agent name and the underlying tool name, since currentAgent
-    // falls back to the last tool log's tool when no agent was reported.
-    if (agentType === 'movie_tv' && (currentAgent === 'movie_tv_agent' || currentAgent === 'movie_tv' || currentAgent === 'movie')) return 'Active';
-    if (agentType === 'deep_research' && (currentAgent === 'deep_research_agent' || currentAgent === 'deep_research')) return 'Active';
-    if (agentType === 'deep_research_pro' && (currentAgent === 'deep_research_pro_agent' || currentAgent === 'deep_research_pro')) return 'Active';
-    if (agentType === 'course_builder' && (currentAgent === 'course_builder_agent' || currentAgent === 'course_builder')) return 'Active';
-    if (agentType === 'document_generator' && (currentAgent === 'document_generator_agent' || currentAgent === 'document_generator')) return 'Active';
-    if (agentType === 'document_formatter' && (currentAgent === 'document_formatter_agent' || currentAgent === 'document_formatter')) return 'Active';
+    if (currentAgent === agentType) return 'Active';
 
     return 'Idle';
   };

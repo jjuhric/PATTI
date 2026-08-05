@@ -96,6 +96,19 @@ async function handleStartResearch(db, userId, params) {
   if (!topic || typeof topic !== 'string' || !topic.trim()) {
     return 'Error: "topic" parameter is required.';
   }
+
+  // Guard against firing off multiple concurrent research crawls - each one spawns an
+  // external Python subprocess with a multi-minute time budget (up to 480s), unlike the
+  // synchronous deep_research_tool which already throttles itself. Only one may run per user.
+  const runningJob = await db.get(
+    "SELECT job_id, topic FROM deep_research_jobs WHERE user_id = ? AND status = 'running'",
+    [userId]
+  );
+  if (runningJob) {
+    return `A deep research job is already running ("${runningJob.topic}", job ${runningJob.job_id}). ` +
+      'Wait for it to finish before starting another.';
+  }
+
   const cleanTopic = topic.trim();
   const cleanMode = mode === 'study_guide' ? 'study_guide' : 'research';
   const jobId = crypto.randomUUID();

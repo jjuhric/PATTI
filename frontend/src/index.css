@@ -635,25 +635,24 @@ select.form-control option {
   background: rgba(139, 92, 246, 0.08);
 }
 
+/* FEAT-7 (docs/REVIEW_2026-08-03.md): notification-dot is now an icon (lucide-react), not a
+   plain span - color still applies via `color` (SVG currentColor), not `background`, so status
+   is conveyed by shape as well as color. */
 .notification-dot {
   flex-shrink: 0;
-  width: 8px;
-  height: 8px;
-  margin-top: 5px;
-  border-radius: 50%;
-  background: var(--text-secondary);
+  color: var(--text-secondary);
 }
 
 .notification-dot.info {
-  background: var(--accent-secondary);
+  color: var(--accent-secondary);
 }
 
 .notification-dot.error {
-  background: #ef4444;
+  color: #ef4444;
 }
 
 .notification-dot.warning {
-  background: #f59e0b;
+  color: #f59e0b;
 }
 
 .notification-item-body {
@@ -1864,6 +1863,68 @@ select.form-control option {
 .table tbody tr:hover {
   background: rgba(139, 92, 246, 0.04);
 }
+
+/* FEAT-1 (docs/REVIEW_2026-08-03.md): DataTable.jsx - sort/filter/pagination on top of the
+   existing .table/.table-zebra/.form-control styles above, not a new visual language. */
+.data-table-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.data-table-search {
+  position: relative;
+  max-width: 320px;
+}
+.data-table-search .form-control {
+  padding-left: 34px;
+}
+.data-table-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+.data-table-sortable-header {
+  cursor: pointer;
+  user-select: none;
+}
+.data-table-sortable-header:hover {
+  color: var(--accent-primary);
+}
+.data-table-header-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.data-table-sort-hint {
+  opacity: 0.35;
+}
+.data-table-empty {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 24px 20px !important;
+}
+.data-table-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 4px 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.data-table-pagination-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.data-table-pagination-page {
+  white-space: nowrap;
+}
+
 .bg-success {
   background-color: var(--accent-green) !important;
 }

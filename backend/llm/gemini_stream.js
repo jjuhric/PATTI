@@ -1,5 +1,6 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { ThinkTagFilter } = require('./think_filter');
+const { estimateTokens, logTokenUsage } = require('../utils/tokenAccounting');
 
 /**
  * Streams a chat completion from Gemini. Unlike callLocalLLMStream, Gemini's SDK handles
@@ -51,20 +52,10 @@ async function callGeminiStream(apiKey, modelName, systemInstruction, history, u
   if (tokenCount === 0) {
     // Estimate fallback
     const promptText = systemInstruction + JSON.stringify(contents);
-    tokenCount = Math.ceil((promptText.length + fullResponseText.length) / 4);
+    tokenCount = estimateTokens(promptText + fullResponseText);
   }
 
-  if (db && typeof db.run === 'function' && userId) {
-    const providerType = provider === 'local' ? 'local' : 'online';
-    try {
-      await db.run(
-        'INSERT INTO token_usage (user_id, model_name, provider_type, token_count) VALUES (?, ?, ?, ?)',
-        [userId, modelName || 'gemini-2.0-flash', providerType, tokenCount]
-      );
-    } catch (err) {
-      console.error('Failed to log Gemini stream tokens:', err);
-    }
-  }
+  await logTokenUsage(db, userId, modelName || 'gemini-2.0-flash', provider === 'local' ? 'local' : 'online', tokenCount, 'Gemini stream');
 }
 
 module.exports = { callGeminiStream };

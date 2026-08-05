@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Bell } from 'lucide-react';
+import { Bell, Info, AlertCircle, AlertTriangle, Circle } from 'lucide-react';
+
+// FEAT-7 (docs/REVIEW_2026-08-03.md): the status dot used to be color-only (an empty span
+// styled by CSS class), which conveys nothing to a color-blind user or a screen reader. Each
+// type now gets a distinct shape/icon in addition to its color, plus an accessible label.
+const NOTIFICATION_TYPE_ICONS = {
+  info: Info,
+  error: AlertCircle,
+  warning: AlertTriangle
+};
 
 function timeAgo(dateStr) {
   const diffMs = Date.now() - new Date(dateStr + 'Z').getTime();
@@ -123,7 +132,18 @@ function NotificationBell({ token, refreshSignal, onOpenChat }) {
                     if (e.key === 'Enter' || e.key === ' ') handleItemClick(notif);
                   }}
                 >
-                  <span className={`notification-dot ${notif.type}`}></span>
+                  {(() => {
+                    const TypeIcon = NOTIFICATION_TYPE_ICONS[notif.type] || Circle;
+                    return (
+                      <TypeIcon
+                        size={14}
+                        className={`notification-dot ${notif.type}`}
+                        role="img"
+                        aria-label={`${notif.type || 'general'} notification`}
+                        style={{ marginTop: '3px' }}
+                      />
+                    );
+                  })()}
                   <div className="notification-item-body">
                     <span className="notification-item-message">{notif.message}</span>
                     <span className="notification-item-time">{timeAgo(notif.created_at)}</span>

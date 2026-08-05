@@ -1,6 +1,7 @@
 const cheerio = require('cheerio');
 const { performWebSearch } = require('./web_search_tool');
 const { storeResearchedKnowledge, searchResearchedKnowledge, deleteResearchedKnowledge } = require('../utils/embeddings');
+const { assertPublicHttpUrl } = require('../utils/ssrfGuard');
 
 const USER_AGENT = 'PATTI-ResearchBot/1.0 (+internal deep-research feature)';
 const MAX_PAGES = 8;
@@ -142,6 +143,12 @@ function relevanceScore(linkText, topic) {
 async function fetchAndClean(url, deadline, maxChars) {
   const remaining = deadline - Date.now();
   if (remaining <= 500) return null;
+
+  try {
+    await assertPublicHttpUrl(url);
+  } catch (err) {
+    return null;
+  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), Math.min(PER_PAGE_TIMEOUT_MS, remaining));

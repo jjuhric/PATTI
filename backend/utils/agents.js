@@ -4,6 +4,7 @@ const path = require('path');
 const logger = require('./logger');
 const { llmFetchSignal } = require('./fetchTimeout');
 const { resolveTarget, resolveEndpoint, buildHeaders, buildBody, extractResponseText } = require('../llm/provider_config');
+const { estimateTokens, logTokenUsage } = require('./tokenAccounting');
 
 const AGENT_PROMPTS = new Proxy({}, {
   get(target, prop) {
@@ -100,15 +101,9 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
     if (result.response.usageMetadata && result.response.usageMetadata.totalTokenCount) {
       tokenCount = result.response.usageMetadata.totalTokenCount;
     } else {
-      tokenCount = Math.ceil((fullPrompt.length + respText.length) / 4);
+      tokenCount = estimateTokens(fullPrompt + respText);
     }
-    if (db && typeof db.run === 'function' && userId) {
-      const providerType = provider === 'local' ? 'local' : 'online';
-      db.run(
-        'INSERT INTO token_usage (user_id, model_name, provider_type, token_count) VALUES (?, ?, ?, ?)',
-        [userId, modelName || 'gemini-2.0-flash', providerType, tokenCount]
-      ).catch(err => console.error('Failed to log Gemini agent turn tokens:', err));
-    }
+    logTokenUsage(db, userId, modelName || 'gemini-2.0-flash', provider === 'local' ? 'local' : 'online', tokenCount, 'Gemini agent turn');
   } else {
     const { targetUrl, targetKey, targetStyle } = resolveTarget(settings);
     const headers = buildHeaders(targetKey, targetStyle);
@@ -122,7 +117,8 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
       images: settings.images,
       temperature: 0.1,
       jsonMode: true,
-      maxTokensOnline: targetStyle === 'openai' ? 2048 : 1024
+      maxTokensOnline: targetStyle === 'openai' ? 2048 : 1024,
+      cacheableSystemPrefix: settings.cacheableSystemPrefix
     });
 
     let res;
@@ -176,15 +172,9 @@ History Context: ${JSON.stringify(history.slice(-5))}`;
     } else if (data.usage && data.usage.input_tokens && data.usage.output_tokens) {
       tokenCount = data.usage.input_tokens + data.usage.output_tokens;
     } else {
-      tokenCount = Math.ceil((fullPrompt.length + respText.length) / 4);
+      tokenCount = estimateTokens(fullPrompt + respText);
     }
-    if (db && typeof db.run === 'function' && userId) {
-      const providerType = provider === 'local' ? 'local' : 'online';
-      db.run(
-        'INSERT INTO token_usage (user_id, model_name, provider_type, token_count) VALUES (?, ?, ?, ?)',
-        [userId, modelName || 'unknown', providerType, tokenCount]
-      ).catch(err => console.error('Failed to log OpenAI/Local agent turn tokens:', err));
-    }
+    logTokenUsage(db, userId, modelName || 'unknown', provider === 'local' ? 'local' : 'online', tokenCount, 'OpenAI/Local agent turn');
   }
 
   respText = respText
@@ -271,15 +261,9 @@ CRITICAL: The tool outputs above are ALL the information you have - there is no 
     if (result.response.usageMetadata && result.response.usageMetadata.totalTokenCount) {
       tokenCount = result.response.usageMetadata.totalTokenCount;
     } else {
-      tokenCount = Math.ceil((responderInstruction.length + rawRespText.length) / 4);
+      tokenCount = estimateTokens(responderInstruction + rawRespText);
     }
-    if (db && typeof db.run === 'function' && userId) {
-      const providerType = provider === 'local' ? 'local' : 'online';
-      db.run(
-        'INSERT INTO token_usage (user_id, model_name, provider_type, token_count) VALUES (?, ?, ?, ?)',
-        [userId, modelName || 'gemini-2.5-flash', providerType, tokenCount]
-      ).catch(err => console.error('Failed to log Gemini response tokens:', err));
-    }
+    logTokenUsage(db, userId, modelName || 'gemini-2.5-flash', provider === 'local' ? 'local' : 'online', tokenCount, 'Gemini response');
   } else {
     const { targetUrl, targetKey, targetStyle } = resolveTarget(settings);
     const headers = buildHeaders(targetKey, targetStyle);
@@ -314,6 +298,9 @@ CRITICAL: The tool outputs above are ALL the information you have - there is no 
     } catch (fetchErr) {
       if (retriesLeft > 0 && !settings.abortSignal?.aborted) {
         logger.warn(`runAgentResponse fetch exception for agent "${agentName}", retrying (${retriesLeft} attempt(s) left): ${fetchErr.message}`);
+        // BUG-9 (docs/REVIEW_2026-08-03.md): mirrors runAgentTurn's backoff so a retry isn't
+        // spent immediately re-hitting a local server that's still recovering.
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         return runAgentResponse(agentName, systemPrompt, settings, userMessage, history, toolOutputs, retriesLeft - 1);
       }
       throw fetchErr;
@@ -333,6 +320,7 @@ CRITICAL: The tool outputs above are ALL the information you have - there is no 
     if (!res.ok) {
       if (retriesLeft > 0 && !settings.abortSignal?.aborted) {
         logger.warn(`runAgentResponse LLM error for agent "${agentName}", retrying (${retriesLeft} attempt(s) left): ${res.status}`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         return runAgentResponse(agentName, systemPrompt, settings, userMessage, history, toolOutputs, retriesLeft - 1);
       }
       throw new Error(`LLM Error: ${res.status}`);
@@ -349,15 +337,9 @@ CRITICAL: The tool outputs above are ALL the information you have - there is no 
       tokenCount = data.usage.input_tokens + data.usage.output_tokens;
     } else {
       const promptText = targetStyle === 'anthropic' ? systemPrompt + responderInstruction : JSON.stringify(body);
-      tokenCount = Math.ceil((promptText.length + rawRespText.length) / 4);
+      tokenCount = estimateTokens(promptText + rawRespText);
     }
-    if (db && typeof db.run === 'function' && userId) {
-      const providerType = provider === 'local' ? 'local' : 'online';
-      db.run(
-        'INSERT INTO token_usage (user_id, model_name, provider_type, token_count) VALUES (?, ?, ?, ?)',
-        [userId, modelName || 'unknown', providerType, tokenCount]
-      ).catch(err => console.error('Failed to log non-gemini response tokens:', err));
-    }
+    logTokenUsage(db, userId, modelName || 'unknown', provider === 'local' ? 'local' : 'online', tokenCount, 'non-gemini response');
   }
 
   // Robustly ensure output is a valid JSON string
@@ -547,6 +529,8 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
       const { handleCoderTool } = require('../tools/coder_tools');
       output = await handleCoderTool(decision.tool, decision.params, {
         userId,
+        chatId,
+        db,
         onCommandApprovalRequired: settings.onCommandApprovalRequired,
         settings,
         agentName
@@ -758,7 +742,7 @@ async function runWorkerAgent(agentName, settings, task, db, userId, chatId) {
   }
 }
 
-async function runSupervisorTurn(systemPrompt, settings, userMessage) {
+async function runSupervisorTurn(systemPrompt, settings, userMessage, retriesLeft = 2) {
   const {
     provider,
     modelName,
@@ -794,15 +778,9 @@ async function runSupervisorTurn(systemPrompt, settings, userMessage) {
     if (result.response.usageMetadata && result.response.usageMetadata.totalTokenCount) {
       tokenCount = result.response.usageMetadata.totalTokenCount;
     } else {
-      tokenCount = Math.ceil((fullPrompt.length + respText.length) / 4);
+      tokenCount = estimateTokens(fullPrompt + respText);
     }
-    if (db && typeof db.run === 'function' && userId) {
-      const providerType = provider === 'local' ? 'local' : 'online';
-      db.run(
-        'INSERT INTO token_usage (user_id, model_name, provider_type, token_count) VALUES (?, ?, ?, ?)',
-        [userId, modelName || 'gemini-2.0-flash', providerType, tokenCount]
-      ).catch(err => console.error('Failed to log Gemini supervisor tokens:', err));
-    }
+    logTokenUsage(db, userId, modelName || 'gemini-2.0-flash', provider === 'local' ? 'local' : 'online', tokenCount, 'Gemini supervisor turn');
   } else {
     const { targetUrl, targetKey, targetStyle } = resolveTarget(settings);
     const headers = buildHeaders(targetKey, targetStyle);
@@ -816,18 +794,37 @@ async function runSupervisorTurn(systemPrompt, settings, userMessage) {
       userText: isAnthropic ? `Parse this user request and return the JSON handoff output: ${userMessage}` : userMessage,
       temperature: 0.1,
       jsonMode: true,
-      maxTokensOnline: 1024
+      maxTokensOnline: 1024,
+      cacheableSystemPrefix: settings.cacheableSystemPrefix
     });
 
-    let res = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: llmFetchSignal(settings.abortSignal)
-    });
+    let res;
+    try {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: llmFetchSignal(settings.abortSignal)
+      });
+    } catch (fetchErr) {
+      // BUG-9 (docs/REVIEW_2026-08-03.md): this function - reached via the PATTI-Client
+      // bridge's runSupervisorHandoff - previously had no retry at all, so a transient hiccup
+      // failed the whole bridge request. Mirrors runAgentTurn's retry+backoff.
+      if (retriesLeft > 0 && !settings.abortSignal?.aborted) {
+        logger.warn(`runSupervisorTurn fetch exception, retrying (${retriesLeft} attempt(s) left): ${fetchErr.message}`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        return runSupervisorTurn(systemPrompt, settings, userMessage, retriesLeft - 1);
+      }
+      throw fetchErr;
+    }
 
     if (!res.ok) {
       const errText = await res.text();
+      if (retriesLeft > 0 && !settings.abortSignal?.aborted) {
+        logger.warn(`runSupervisorTurn LLM error, retrying (${retriesLeft} attempt(s) left): ${res.status} - ${errText}`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        return runSupervisorTurn(systemPrompt, settings, userMessage, retriesLeft - 1);
+      }
       throw new Error(`LLM Error: ${res.status} - ${errText}`);
     }
 
@@ -841,15 +838,9 @@ async function runSupervisorTurn(systemPrompt, settings, userMessage) {
     } else if (data.usage && data.usage.input_tokens && data.usage.output_tokens) {
       tokenCount = data.usage.input_tokens + data.usage.output_tokens;
     } else {
-      tokenCount = Math.ceil((fullPrompt.length + respText.length) / 4);
+      tokenCount = estimateTokens(fullPrompt + respText);
     }
-    if (db && typeof db.run === 'function' && userId) {
-      const providerType = provider === 'local' ? 'local' : 'online';
-      db.run(
-        'INSERT INTO token_usage (user_id, model_name, provider_type, token_count) VALUES (?, ?, ?, ?)',
-        [userId, modelName || 'unknown', providerType, tokenCount]
-      ).catch(err => console.error('Failed to log OpenAI/Local supervisor tokens:', err));
-    }
+    logTokenUsage(db, userId, modelName || 'unknown', provider === 'local' ? 'local' : 'online', tokenCount, 'OpenAI/Local supervisor turn');
   }
 
   respText = respText
@@ -897,6 +888,8 @@ async function runSupervisorHandoff(userPrompt, settings = {}, db = null, userId
 module.exports = {
   AGENT_PROMPTS,
   runAgentTurn,
+  runAgentResponse,
+  runSupervisorTurn,
   runWorkerAgent,
   runSupervisorHandoff
 };

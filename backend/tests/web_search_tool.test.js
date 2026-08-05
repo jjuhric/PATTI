@@ -1,3 +1,11 @@
+// The SSRF guard (SEC-4) does a real DNS lookup, which these tests must not depend on -
+// fixture domains here are fake and shouldn't resolve, and a real lookup would make tests
+// slow/flaky/offline-unsafe. Trust ssrfGuard's own dedicated tests for its logic; here it's
+// just a pass-through so fetch-mock call counts stay exactly as each test expects.
+jest.mock('../utils/ssrfGuard', () => ({
+  assertPublicHttpUrl: jest.fn(async (url) => new URL(url))
+}));
+
 const { handleWebSearchTool } = require('../tools/web_search_tool');
 const cheerio = require('cheerio');
 

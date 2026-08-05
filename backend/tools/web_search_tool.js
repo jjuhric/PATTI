@@ -1,5 +1,6 @@
 const cheerio = require('cheerio');
 const { tavilySearch, isConfigured: isTavilyConfigured, isUsageExhausted: isTavilyUsageExhausted } = require('../utils/tavily_search');
+const { assertPublicHttpUrl } = require('../utils/ssrfGuard');
 
 // Tavily result relevance is scored 0-1 by Tavily itself; below this, a result is noise rather
 // than something worth including - this is the "think through search results" filtering step,
@@ -36,6 +37,11 @@ async function getExtractorSettings(db, userId) {
  * visible text, same as this tool's behavior before the extractor existed. One fetch covers
  * both title and content so a fallback scrape never costs a second round-trip to the same URL. */
 async function blindScrapeUrl(url, maxChars, timeoutMs = 3000) {
+  try {
+    await assertPublicHttpUrl(url);
+  } catch (err) {
+    return null;
+  }
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);

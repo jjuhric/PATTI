@@ -86,16 +86,53 @@ describe('handleDeepResearchProTool', () => {
     expect(jobIdMatch).not.toBeNull();
     const row = await db.get('SELECT * FROM deep_research_jobs WHERE job_id = ?', [jobIdMatch[1]]);
     expect(row).toMatchObject({ topic: 'Rust ownership', mode: 'research', status: 'running' });
+
+    // Drain the job so it doesn't leak into later tests reusing the same userId - BUG-10's
+    // concurrency guard now refuses a second job for a user while one is still 'running'.
+    lastSpawnedChild.emit('close', 1);
+    await waitForJobStatus(db, jobIdMatch[1]);
   });
 
   test('study_guide mode spawns the study-guide subcommand with per-domain args', async () => {
-    await handleDeepResearchProTool(db, userId, 'start_research', { topic: 'AWS AI Practitioner', mode: 'study_guide' });
+    const output = await handleDeepResearchProTool(db, userId, 'start_research', { topic: 'AWS AI Practitioner', mode: 'study_guide' });
 
     const [, args] = mockSpawn.mock.calls[0];
     expect(args).toEqual(expect.arrayContaining([
       'study-guide', 'AWS AI Practitioner',
       '--max-pages-per-domain', '20', '--depth-per-domain', '3', '--time-budget-per-domain', '240'
     ]));
+
+    const jobId = /job (\S+),/.exec(output)[1];
+    lastSpawnedChild.emit('close', 1);
+    await waitForJobStatus(db, jobId);
+  });
+
+  test('BUG-10: start_research refuses a second job while one is already running for the same user', async () => {
+    const guardUser = await db.run("INSERT INTO users (username, password_hash) VALUES ('guardconcurrentuser', 'hashed')");
+
+    const first = await handleDeepResearchProTool(db, guardUser.lastID, 'start_research', { topic: 'First concurrent topic' });
+    const firstJobId = /job (\S+),/.exec(first)[1];
+
+    const second = await handleDeepResearchProTool(db, guardUser.lastID, 'start_research', { topic: 'Second concurrent topic' });
+    expect(second).toMatch(/already running/);
+    expect(second).toContain('First concurrent topic');
+    expect(second).toContain(firstJobId);
+
+    // The rejected request never spawned a second subprocess.
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const rows = await db.all("SELECT * FROM deep_research_jobs WHERE user_id = ? AND status = 'running'", [guardUser.lastID]);
+    expect(rows).toHaveLength(1);
+  });
+
+  test('BUG-10: a different user can still start their own research job while another user has one running', async () => {
+    const userA = await db.run("INSERT INTO users (username, password_hash) VALUES ('guardownera', 'hashed')");
+    const userB = await db.run("INSERT INTO users (username, password_hash) VALUES ('guardownerb', 'hashed')");
+
+    await handleDeepResearchProTool(db, userA.lastID, 'start_research', { topic: 'Owner A topic' });
+
+    const second = await handleDeepResearchProTool(db, userB.lastID, 'start_research', { topic: 'Owner B topic' });
+    expect(second).toMatch(/Started a deep research job on "Owner B topic"/);
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
   });
 
   test('on successful completion, posts the report into the Deep Research Results chat and broadcasts an alert', async () => {

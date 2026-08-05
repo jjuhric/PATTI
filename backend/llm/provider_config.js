@@ -85,6 +85,25 @@ function resolveModelName(modelName) {
     : modelName;
 }
 
+// ENH-3: Anthropic's `system` field accepts either a plain string or an array of content
+// blocks, each optionally carrying `cache_control: {type: "ephemeral"}`. Splitting off a
+// cacheable prefix block lets Anthropic reuse its cache for that block on subsequent requests
+// even though the remainder of the system prompt (per-turn memories/feedback/context) differs
+// every time - the cache lookup only needs that leading block to match exactly, not the whole
+// prompt. Falls back to the plain string (today's behavior, uncached) whenever no prefix is
+// given or it doesn't actually match the start of systemText.
+function buildAnthropicSystem(systemText, cacheableSystemPrefix) {
+  if (!cacheableSystemPrefix || !systemText || !systemText.startsWith(cacheableSystemPrefix)) {
+    return systemText;
+  }
+  const remainder = systemText.slice(cacheableSystemPrefix.length);
+  const blocks = [{ type: 'text', text: cacheableSystemPrefix, cache_control: { type: 'ephemeral' } }];
+  if (remainder) {
+    blocks.push({ type: 'text', text: remainder });
+  }
+  return blocks;
+}
+
 function attachImages(content, images) {
   const parts = [{ type: 'text', text: content }];
   for (const base64Img of images) {
@@ -109,14 +128,20 @@ function attachImages(content, images) {
  * @param {number} [opts.temperature]
  * @param {number} [opts.maxTokensOnline] - max_tokens to send when provider is 'online'
  * @param {boolean} [opts.jsonMode] - request response_format: json_object (openai/lm-studio only)
+ * @param {string} [opts.cacheableSystemPrefix] - ENH-3 (docs/REVIEW_2026-08-03.md): the static,
+ *   byte-identical-across-turns leading portion of systemText (e.g. an agent's base prompt,
+ *   before per-turn memories/feedback/context get appended). anthropic only - ignored for every
+ *   other apiStyle, which has no prompt-caching mechanism here. Must be a genuine prefix of
+ *   systemText or it's ignored (falls back to the plain uncached string) rather than risk
+ *   silently caching the wrong text.
  */
-function buildBody({ targetStyle, provider, modelName, systemText, userText, images, temperature, maxTokensOnline, jsonMode }) {
+function buildBody({ targetStyle, provider, modelName, systemText, userText, images, temperature, maxTokensOnline, jsonMode, cacheableSystemPrefix }) {
   const finalModel = resolveModelName(modelName);
 
   if (targetStyle === 'anthropic') {
     return {
       model: finalModel,
-      system: systemText,
+      system: buildAnthropicSystem(systemText, cacheableSystemPrefix),
       messages: [{ role: 'user', content: userText }],
       ...(provider === 'local' ? {} : { max_tokens: maxTokensOnline })
     };
@@ -153,7 +178,7 @@ function buildBody({ targetStyle, provider, modelName, systemText, userText, ima
  * (the streaming callers already build multi-turn history, unlike the single-shot builders
  * above, so this takes messages directly rather than systemText/userText).
  */
-function buildStreamBody({ targetStyle, modelName, messages, temperature, frequencyPenalty, presencePenalty }) {
+function buildStreamBody({ targetStyle, modelName, messages, temperature, frequencyPenalty, presencePenalty, cacheableSystemPrefix }) {
   const finalModel = resolveModelName(modelName);
 
   if (targetStyle === 'anthropic') {
@@ -165,7 +190,7 @@ function buildStreamBody({ targetStyle, modelName, messages, temperature, freque
       model: finalModel,
       messages: anthropicMessages,
       stream: true,
-      ...(systemMessage ? { system: systemMessage } : {})
+      ...(systemMessage ? { system: buildAnthropicSystem(systemMessage, cacheableSystemPrefix) } : {})
     };
   }
 
@@ -203,6 +228,7 @@ module.exports = {
   buildHeaders,
   buildBody,
   buildStreamBody,
+  buildAnthropicSystem,
   extractResponseText,
   attachImages,
   resolveModelName,

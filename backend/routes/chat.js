@@ -299,8 +299,8 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
         finalThoughts = parsed.thoughts;
 
         await db.run(
-          'INSERT INTO messages (chat_id, role, content, thoughts) VALUES (?, ?, ?, ?)',
-          [chatId, 'assistant', finalContent, finalThoughts]
+          'INSERT INTO messages (chat_id, role, content, thoughts, agents_used) VALUES (?, ?, ?, ?, ?)',
+          [chatId, 'assistant', finalContent, finalThoughts, agentsUsedJson()]
         );
       } catch (dbErr) {
         console.error('Failed to save aborted assistant message:', dbErr);
@@ -313,6 +313,18 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
 
   let accumulatedThoughts = '';
   let accumulatedContent = '';
+  // BUG-13 (docs/REVIEW_2026-08-03.md): which worker agent(s) actually got delegated to this
+  // turn, so feedback_learning.js can attribute a later "that worked"/"no, wrong" reply to the
+  // real agent instead of a generic record. 'supervisor'/'communication_specialist' are the
+  // always-present routing/orchestration agents on nearly every turn, not a meaningful signal
+  // of "what worked", so they're excluded here.
+  const agentsUsedThisTurn = new Set();
+  const trackAgentStatus = (statusData) => {
+    if (statusData && statusData.agent && !['supervisor', 'communication_specialist'].includes(statusData.agent)) {
+      agentsUsedThisTurn.add(statusData.agent);
+    }
+  };
+  const agentsUsedJson = () => (agentsUsedThisTurn.size > 0 ? JSON.stringify([...agentsUsedThisTurn]) : null);
 
   const sendEvent = (event, data) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -372,7 +384,7 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
             sendEvent('content', contentChunk);
           },
           onToolCall: (toolCall) => sendEvent('tool', toolCall),
-          onAgentStatus: (statusData) => sendEvent('agent_status', statusData),
+          onAgentStatus: (statusData) => { trackAgentStatus(statusData); sendEvent('agent_status', statusData); },
           onModelUsed: (model) => sendEvent('model_used', { model }),
           onCommandApprovalRequired: ({ commandId, command, safety_analysis }) => {
             sendEvent('command_approval_required', { commandId, command, safety_analysis });
@@ -403,7 +415,7 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
             sendEvent('content', contentChunk);
           },
           onToolCall: (toolCall) => sendEvent('tool', toolCall),
-          onAgentStatus: (statusData) => sendEvent('agent_status', statusData),
+          onAgentStatus: (statusData) => { trackAgentStatus(statusData); sendEvent('agent_status', statusData); },
           onModelUsed: (model) => sendEvent('model_used', { model }),
           onCommandApprovalRequired: ({ commandId, command, safety_analysis }) => {
             sendEvent('command_approval_required', { commandId, command, safety_analysis });
@@ -426,8 +438,8 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
       finalThoughts = parsed.thoughts;
 
       await db.run(
-        'INSERT INTO messages (chat_id, role, content, thoughts) VALUES (?, ?, ?, ?)',
-        [chatId, 'assistant', finalContent, finalThoughts]
+        'INSERT INTO messages (chat_id, role, content, thoughts, agents_used) VALUES (?, ?, ?, ?, ?)',
+        [chatId, 'assistant', finalContent, finalThoughts, agentsUsedJson()]
       );
 
       completed = true;
@@ -475,8 +487,8 @@ router.post('/chat/stream', authenticateToken, streamLimiter, checkQuota, async 
           finalThoughts = parsed.thoughts;
 
           await db.run(
-            'INSERT INTO messages (chat_id, role, content, thoughts, is_error) VALUES (?, ?, ?, ?, 1)',
-            [chatId, 'assistant', finalContent, finalThoughts]
+            'INSERT INTO messages (chat_id, role, content, thoughts, is_error, agents_used) VALUES (?, ?, ?, ?, 1, ?)',
+            [chatId, 'assistant', finalContent, finalThoughts, agentsUsedJson()]
           );
         } catch (dbErr) {
           console.error('Failed to save error assistant message:', dbErr);

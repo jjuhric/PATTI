@@ -1,6 +1,6 @@
 import React from 'react';
-import { describe, test, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, test, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import ProfileModal from './ProfileModal';
 
 describe('ProfileModal Component Tests', () => {
@@ -312,5 +312,68 @@ describe('ProfileModal Component Tests', () => {
     expect(mockSaveProfile).toHaveBeenCalledWith(expect.objectContaining({
       interests: ['Baking']
     }));
+  });
+
+  describe('Security tab (SEC-5 log out everywhere)', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    test('clicking "Log out everywhere" asks for confirmation and calls onLogoutEverywhere when confirmed', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const onLogoutEverywhere = vi.fn().mockResolvedValue();
+
+      render(
+        <ProfileModal
+          isProfileOpen={true}
+          setIsProfileOpen={vi.fn()}
+          profile={defaultProfile}
+          saveProfile={vi.fn()}
+          onLogoutEverywhere={onLogoutEverywhere}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Security'));
+      fireEvent.click(screen.getByText(/log out everywhere/i));
+
+      expect(window.confirm).toHaveBeenCalled();
+      await waitFor(() => expect(onLogoutEverywhere).toHaveBeenCalledTimes(1));
+    });
+
+    test('does not call onLogoutEverywhere when the confirmation is cancelled', () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(false);
+      const onLogoutEverywhere = vi.fn();
+
+      render(
+        <ProfileModal
+          isProfileOpen={true}
+          setIsProfileOpen={vi.fn()}
+          profile={defaultProfile}
+          saveProfile={vi.fn()}
+          onLogoutEverywhere={onLogoutEverywhere}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Security'));
+      fireEvent.click(screen.getByText(/log out everywhere/i));
+
+      expect(window.confirm).toHaveBeenCalled();
+      expect(onLogoutEverywhere).not.toHaveBeenCalled();
+    });
+
+    test('the Security tab has no "Save Profile" button', () => {
+      render(
+        <ProfileModal
+          isProfileOpen={true}
+          setIsProfileOpen={vi.fn()}
+          profile={defaultProfile}
+          saveProfile={vi.fn()}
+          onLogoutEverywhere={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Security'));
+      expect(screen.queryByText('Save Profile')).toBeNull();
+    });
   });
 });

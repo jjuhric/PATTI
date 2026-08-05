@@ -223,4 +223,60 @@ describe('handleCourseBuilderTool', () => {
     releaseOutline(malformedResponse);
     await waitForJobStatus(db, jobId);
   });
+
+  test('BUG-10: start_course refuses a second job while one is already running for the same user', async () => {
+    // generateOutline retries once on a malformed response, so only the very first fetch call
+    // should hang - the retry call must resolve immediately or the job never leaves 'running'
+    // (same gotcha as the "check_status reports lesson progress" test above).
+    let releaseOutline;
+    let callCount = 0;
+    const malformedResponse = { ok: true, json: async () => ({ choices: [{ message: { content: 'not json' } }] }) };
+    global.fetch = jest.fn(() => {
+      callCount++;
+      if (callCount === 1) return new Promise((resolve) => { releaseOutline = resolve; });
+      return Promise.resolve(malformedResponse);
+    });
+
+    const first = await handleCourseBuilderTool(db, userId, 'start_course', { topic: 'First concurrent topic' });
+    const firstJobId = /job (\S+),/.exec(first)[1];
+
+    const second = await handleCourseBuilderTool(db, userId, 'start_course', { topic: 'Second concurrent topic' });
+    expect(second).toMatch(/already being generated/);
+    expect(second).toContain('First concurrent topic');
+    expect(second).toContain(firstJobId);
+
+    // Confirm no second row was ever inserted for the rejected request.
+    const rows = await db.all("SELECT * FROM course_generation_jobs WHERE user_id = ? AND status = 'running'", [userId]);
+    expect(rows).toHaveLength(1);
+
+    // Drain the first job so it doesn't leak into later tests.
+    const deadline = Date.now() + 2000;
+    while (!releaseOutline) {
+      if (Date.now() > deadline) throw new Error('Timed out waiting for the background job to call fetch()');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    releaseOutline(malformedResponse);
+    await waitForJobStatus(db, firstJobId);
+  });
+
+  test('BUG-10: a different user can still start their own job while another user has one running', async () => {
+    const other = await db.run("INSERT INTO users (username, password_hash) VALUES ('otherconcurrentuser', 'hashed')");
+    // Both jobs run concurrently against the same mock, so response ordering between them
+    // isn't guaranteed - only used to let both eventually leave 'running', not to check
+    // lesson content, so any resolvable response (outline-shaped or not) is fine either way.
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify([{ title: 'Solo Lesson', objective: 'x' }]) } }] })
+    }));
+
+    const first = await handleCourseBuilderTool(db, userId, 'start_course', { topic: 'Owner A topic' });
+    const firstJobId = /job (\S+),/.exec(first)[1];
+
+    const second = await handleCourseBuilderTool(db, other.lastID, 'start_course', { topic: 'Owner B topic' });
+    expect(second).toMatch(/Started building a full course on "Owner B topic"/);
+    const secondJobId = /job (\S+),/.exec(second)[1];
+
+    await waitForJobStatus(db, firstJobId);
+    await waitForJobStatus(db, secondJobId);
+  });
 });
