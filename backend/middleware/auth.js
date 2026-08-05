@@ -21,9 +21,14 @@ async function authenticateToken(req, res, next) {
       if (!dbUser) {
         return res.status(401).json({ error: 'Stale session: User no longer exists.' });
       }
-      // SEC-5: a JWT issued before the user's revocation cutoff is rejected even though it
-      // hasn't reached its own expiry - see POST /api/auth/logout-everywhere in routes/auth.js.
-      if (dbUser.tokens_valid_after && user.iat * 1000 < new Date(dbUser.tokens_valid_after).getTime()) {
+      // SEC-5: a JWT issued at or before the user's revocation cutoff is rejected even though
+      // it hasn't reached its own expiry - see POST /api/auth/logout-everywhere in routes/auth.js.
+      // Both `iat` and the SQLite CURRENT_TIMESTAMP cutoff are whole-second precision, so a
+      // token issued in the same second as the revocation call (including the very token that
+      // made the call) must compare as revoked too - a strict `<` let that token slip through,
+      // intermittently on a fast CI runner where login and logout-everywhere land in the same
+      // second.
+      if (dbUser.tokens_valid_after && user.iat * 1000 <= new Date(dbUser.tokens_valid_after).getTime()) {
         return res.status(401).json({ error: 'Session revoked. Please log in again.' });
       }
     } catch (dbErr) {
