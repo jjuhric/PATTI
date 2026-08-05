@@ -27,7 +27,7 @@
   "dependencies": {
     "concurrently": "^8.2.2",
     "google-news-url-decoder": "^1.2.2",
-    "node-html-parser": "^8.0.4"
+    "node-html-parser": "^9.0.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.44.1"
