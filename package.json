@@ -30,7 +30,7 @@
     "node-html-parser": "^8.0.4"
   },
   "devDependencies": {
-    "@playwright/test": "^1.44.1"
+    "@playwright/test": "^1.62.1"
   },
   "engines": {
     "node": ">=22.0.0"
