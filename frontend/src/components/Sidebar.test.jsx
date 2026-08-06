@@ -226,8 +226,132 @@ describe('Sidebar Component Tests', () => {
         setActiveTab={mockSetActiveTab}
       />
     );
-    const editingItem = screen.getAllByRole('textbox')[0].closest('.chat-item');
+    // The sidebar search box is also a textbox, so scope the query to a rename input that's
+    // actually inside a .chat-item rather than assuming index 0 among all textboxes.
+    const editingItem = document.querySelector('.chat-item input')?.closest('.chat-item');
     fireEvent.click(editingItem);
     expect(mockSetActiveChatId).not.toHaveBeenCalled();
+  });
+
+  // FEAT-2 (docs/REVIEW_2026-08-03.md): chat history search box + results.
+  describe('chat search', () => {
+    test('typing in the search box calls setChatSearchQuery', () => {
+      const mockSetChatSearchQuery = vi.fn();
+      render(<Sidebar {...defaultProps} setChatSearchQuery={mockSetChatSearchQuery} />);
+      fireEvent.change(screen.getByPlaceholderText('Search chats...'), { target: { value: 'kubernetes' } });
+      expect(mockSetChatSearchQuery).toHaveBeenCalledWith('kubernetes');
+    });
+
+    test('a query under 2 characters still shows the normal chat list, not search results', () => {
+      render(<Sidebar {...defaultProps} chatSearchQuery="k" chatSearchResults={[{ chatId: 99, title: 'Should not show', snippet: '' }]} />);
+      expect(screen.getByText('Chat One')).toBeInTheDocument();
+      expect(screen.queryByText('Should not show')).not.toBeInTheDocument();
+    });
+
+    test('shows a "Searching..." status while a search is in flight', () => {
+      render(<Sidebar {...defaultProps} chatSearchQuery="kubernetes" isSearchingChats={true} />);
+      expect(screen.getByText('Searching…')).toBeInTheDocument();
+      expect(screen.queryByText('Chat One')).not.toBeInTheDocument();
+    });
+
+    test('shows a no-results message when the search comes back empty', () => {
+      render(<Sidebar {...defaultProps} chatSearchQuery="nothingmatches" chatSearchResults={[]} />);
+      expect(screen.getByText('No chats found for "nothingmatches".')).toBeInTheDocument();
+    });
+
+    test('renders search results with title and snippet instead of the normal chat list', () => {
+      render(
+        <Sidebar
+          {...defaultProps}
+          chatSearchQuery="kubernetes"
+          chatSearchResults={[
+            { chatId: 5, title: 'Kubernetes notes', snippet: 'pod scheduling explained here' },
+            { chatId: 6, title: 'Chat 9:00 AM', snippet: null }
+          ]}
+        />
+      );
+      expect(screen.getByText('Kubernetes notes')).toBeInTheDocument();
+      expect(screen.getByText('pod scheduling explained here')).toBeInTheDocument();
+      expect(screen.getByText('Chat 9:00 AM')).toBeInTheDocument();
+      expect(screen.queryByText('Chat One')).not.toBeInTheDocument();
+    });
+
+    test('clicking a search result calls onOpenSearchResult with its chatId', () => {
+      const mockOnOpenSearchResult = vi.fn();
+      render(
+        <Sidebar
+          {...defaultProps}
+          chatSearchQuery="kubernetes"
+          chatSearchResults={[{ chatId: 5, title: 'Kubernetes notes', snippet: 'pod scheduling' }]}
+          onOpenSearchResult={mockOnOpenSearchResult}
+        />
+      );
+      fireEvent.click(screen.getByLabelText('Open chat "Kubernetes notes"'));
+      expect(mockOnOpenSearchResult).toHaveBeenCalledWith(5);
+    });
+
+    test('the clear button only appears with a query and resets it', () => {
+      const mockSetChatSearchQuery = vi.fn();
+      const { rerender } = render(<Sidebar {...defaultProps} setChatSearchQuery={mockSetChatSearchQuery} />);
+      expect(screen.queryByLabelText('Clear search')).not.toBeInTheDocument();
+
+      rerender(<Sidebar {...defaultProps} chatSearchQuery="kubernetes" setChatSearchQuery={mockSetChatSearchQuery} />);
+      fireEvent.click(screen.getByLabelText('Clear search'));
+      expect(mockSetChatSearchQuery).toHaveBeenCalledWith('');
+    });
+  });
+
+  // FEAT-3 (docs/REVIEW_2026-08-03.md): bulk delete for chats, behind a "Select chats" toggle.
+  describe('bulk delete chats', () => {
+    test('entering select mode shows a checkbox per chat and hides the rename/delete icons', () => {
+      render(<Sidebar {...defaultProps} />);
+      expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByText('Select chats'));
+      expect(screen.getAllByRole('checkbox')).toHaveLength(2);
+      expect(screen.queryByLabelText('Rename chat "Chat One"')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Delete chat "Chat One"')).not.toBeInTheDocument();
+    });
+
+    test('clicking a chat row in select mode toggles its checkbox instead of opening the chat', () => {
+      const mockSetActiveChatId = vi.fn();
+      render(<Sidebar {...defaultProps} setActiveChatId={mockSetActiveChatId} />);
+      fireEvent.click(screen.getByText('Select chats'));
+
+      fireEvent.click(screen.getByLabelText('Select chat "Chat Two"'));
+      expect(mockSetActiveChatId).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Select chat "Chat Two"')).toBeChecked();
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+    });
+
+    test('the Delete button is disabled with nothing selected and calls onBulkDeleteChats once items are checked', () => {
+      const mockOnBulkDeleteChats = vi.fn();
+      render(<Sidebar {...defaultProps} onBulkDeleteChats={mockOnBulkDeleteChats} />);
+      fireEvent.click(screen.getByText('Select chats'));
+
+      expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+
+      fireEvent.click(screen.getByLabelText('Select chat "Chat One"'));
+      fireEvent.click(screen.getByLabelText('Select chat "Chat Two"'));
+      expect(screen.getByRole('button', { name: 'Delete' })).not.toBeDisabled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+      expect(mockOnBulkDeleteChats).toHaveBeenCalledWith([1, 2], expect.any(Function));
+    });
+
+    test('Cancel exits select mode and clears the selection', () => {
+      render(<Sidebar {...defaultProps} />);
+      fireEvent.click(screen.getByText('Select chats'));
+      fireEvent.click(screen.getByLabelText('Select chat "Chat One"'));
+
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+      expect(screen.getByText('Select chats')).toBeInTheDocument();
+    });
+
+    test('the select toggle is hidden while searching', () => {
+      render(<Sidebar {...defaultProps} chatSearchQuery="kubernetes" chatSearchResults={[]} />);
+      expect(screen.queryByText('Select chats')).not.toBeInTheDocument();
+    });
   });
 });

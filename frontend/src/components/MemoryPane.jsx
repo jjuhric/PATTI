@@ -1,10 +1,32 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Brain, Trash2, Clock, PlusCircle } from 'lucide-react';
 
-export default function MemoryPane({ memories, onAddMemory, onDeleteMemory }) {
+export default function MemoryPane({ memories, onAddMemory, onDeleteMemory, onBulkDeleteMemories = () => {} }) {
   const [newContent, setNewContent] = useState('');
   const [newLevel, setNewLevel] = useState('long-term');
   const [customDate, setCustomDate] = useState('');
+
+  // FEAT-3 (docs/REVIEW_2026-08-03.md): bulk delete across both the long-term and short-term
+  // lists - a single selection set shared by both, since "delete memory" doesn't need to
+  // distinguish which card a memory happened to be sorted into.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const validIds = new Set(memories.map((m) => m.id));
+      const next = new Set([...prev].filter((id) => validIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [memories]);
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedIds(new Set());
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -66,6 +88,22 @@ export default function MemoryPane({ memories, onAddMemory, onDeleteMemory }) {
           </div>
         </div>
 
+        {selectedIds.size > 0 && (
+          <div className="memory-bulk-toolbar">
+            <span className="memory-bulk-count">{selectedIds.size} selected</span>
+            <button
+              type="button"
+              className="btn btn-sm text-error"
+              onClick={() => onBulkDeleteMemories([...selectedIds], clearSelection)}
+            >
+              Delete {selectedIds.size} memor{selectedIds.size === 1 ? 'y' : 'ies'}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={clearSelection}>
+              Clear selection
+            </button>
+          </div>
+        )}
+
         {/* FEAT-8 (docs/REVIEW_2026-08-03.md): the .memory-layout CSS class already defines a
             responsive 768px breakpoint (index.css) - this used to also carry a duplicate inline
             style with the same fixed-width values, which fought the CSS class and forced it to
@@ -116,6 +154,13 @@ export default function MemoryPane({ memories, onAddMemory, onDeleteMemory }) {
                       borderLeft: '4px solid var(--accent-green)',
                       transition: 'transform 0.2s'
                     }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(mem.id)}
+                        onChange={() => toggleSelect(mem.id)}
+                        aria-label={`Select memory: ${mem.content}`}
+                        style={{ marginRight: '12px', flexShrink: 0 }}
+                      />
                       <div style={{ flex: 1, marginRight: '16px' }}>
                         <span style={{ fontSize: '0.98rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>{mem.content}</span>
                       </div>
@@ -186,6 +231,13 @@ export default function MemoryPane({ memories, onAddMemory, onDeleteMemory }) {
                       borderLeft: '4px solid #eab308',
                       transition: 'transform 0.2s'
                     }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(mem.id)}
+                        onChange={() => toggleSelect(mem.id)}
+                        aria-label={`Select memory: ${mem.content}`}
+                        style={{ marginRight: '12px', flexShrink: 0 }}
+                      />
                       <div style={{ flex: 1, marginRight: '16px' }}>
                         <div style={{ fontSize: '0.98rem', color: 'var(--text-primary)', lineHeight: 1.4, marginBottom: '6px' }}>{mem.content}</div>
                         <div style={{

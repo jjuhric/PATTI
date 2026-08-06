@@ -183,4 +183,54 @@ describe('MemoryPane Component Tests', () => {
       days: undefined
     });
   });
+
+  // FEAT-3 (docs/REVIEW_2026-08-03.md): bulk delete across both memory lists.
+  describe('bulk delete', () => {
+    test('the bulk toolbar only appears once a memory is selected, sharing selection across both lists', () => {
+      render(<MemoryPane {...defaultProps} />);
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByLabelText('Select memory: Likes apple pie'));
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByLabelText('Select memory: Buy coffee filters'));
+      expect(screen.getByText('2 selected')).toBeInTheDocument();
+      expect(screen.getByText('Delete 2 memories')).toBeInTheDocument();
+    });
+
+    test('singular vs. plural wording on the delete button', () => {
+      render(<MemoryPane {...defaultProps} />);
+      fireEvent.click(screen.getByLabelText('Select memory: Likes apple pie'));
+      expect(screen.getByText('Delete 1 memory')).toBeInTheDocument();
+    });
+
+    test('clicking the delete button calls onBulkDeleteMemories with the selected ids and a clear callback', () => {
+      const mockBulkDelete = vi.fn();
+      render(<MemoryPane {...defaultProps} onBulkDeleteMemories={mockBulkDelete} />);
+
+      fireEvent.click(screen.getByLabelText('Select memory: Likes apple pie'));
+      fireEvent.click(screen.getByLabelText('Select memory: Buy coffee filters'));
+      fireEvent.click(screen.getByText('Delete 2 memories'));
+
+      expect(mockBulkDelete).toHaveBeenCalledWith([1, 2], expect.any(Function));
+    });
+
+    test('"Clear selection" empties the selection and hides the toolbar', () => {
+      render(<MemoryPane {...defaultProps} />);
+      fireEvent.click(screen.getByLabelText('Select memory: Likes apple pie'));
+      fireEvent.click(screen.getByText('Clear selection'));
+
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Select memory: Likes apple pie')).not.toBeChecked();
+    });
+
+    test('selection is pruned when a selected memory disappears (e.g. after a delete)', () => {
+      const { rerender } = render(<MemoryPane {...defaultProps} />);
+      fireEvent.click(screen.getByLabelText('Select memory: Likes apple pie'));
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+
+      rerender(<MemoryPane {...defaultProps} memories={defaultProps.memories.filter((m) => m.id !== 1)} />);
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+  });
 });

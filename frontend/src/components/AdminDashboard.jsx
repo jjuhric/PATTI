@@ -120,6 +120,53 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
     }
   };
 
+  // FEAT-3 (docs/REVIEW_2026-08-03.md): bulk delete, built on the same single-user DELETE
+  // endpoint fired once per selected id rather than a new bulk backend route - simpler, and
+  // reuses an already-tested endpoint. The requester's own row is never included even if
+  // selected via "select all", matching the single-delete button's self-delete guard below.
+  const handleBulkDeleteUsers = (selectedUsers, clearSelection) => {
+    const targets = selectedUsers.filter((u) => u.id !== currentUserId);
+    if (targets.length === 0) return;
+    const label = `${targets.length} user${targets.length === 1 ? '' : 's'}`;
+    const message = `Delete ${label}? This cannot be undone.`;
+    const run = async () => {
+      setUsersError('');
+      setUsersSuccess('');
+      const results = await Promise.all(targets.map((u) => api.delete(`/api/admin/users/${u.id}`)));
+      const failed = results.filter((r) => !r.ok).length;
+      if (failed > 0) {
+        setUsersError(`Deleted ${targets.length - failed} of ${targets.length} users - ${failed} failed.`);
+      } else {
+        setUsersSuccess(`Deleted ${label}.`);
+      }
+      clearSelection();
+      fetchUsers();
+    };
+    if (onRequestConfirm) {
+      onRequestConfirm({ type: 'confirm', title: 'PATTI', message, onConfirm: run });
+    } else {
+      if (!window.confirm(message)) return;
+      run();
+    }
+  };
+
+  const handleBulkDeleteNodes = (selectedNodes, clearSelection) => {
+    if (selectedNodes.length === 0) return;
+    const label = `${selectedNodes.length} device${selectedNodes.length === 1 ? '' : 's'}`;
+    const message = `Delete ${label}? This cannot be undone.`;
+    const run = async () => {
+      await Promise.all(selectedNodes.map((n) => api.delete(`/api/nodes/${n.id}`)));
+      clearSelection();
+      if (typeof onRefreshNodes === 'function') onRefreshNodes();
+    };
+    if (onRequestConfirm) {
+      onRequestConfirm({ type: 'confirm', title: 'PATTI', message, onConfirm: run });
+    } else {
+      if (!window.confirm(message)) return;
+      run();
+    }
+  };
+
   const openCreateModal = () => {
     setCreateUsername('');
     setCreatePassword('');
@@ -339,9 +386,22 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
             ]}
             data={users}
             getRowKey={(u) => u.id}
+            getRowLabel={(u) => u.username}
             searchPlaceholder="Search users..."
             emptyMessage="No users found."
             pageSize={10}
+            selectable
+            bulkActions={(selectedUsers, clearSelection) => {
+              const targets = selectedUsers.filter((u) => u.id !== currentUserId);
+              if (targets.length === 0) {
+                return <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Your own account can't be bulk-deleted.</span>;
+              }
+              return (
+                <button className="btn btn-sm text-error" onClick={() => handleBulkDeleteUsers(selectedUsers, clearSelection)}>
+                  Delete {targets.length} user{targets.length === 1 ? '' : 's'}
+                </button>
+              );
+            }}
           />
         </div>
       )}
@@ -403,9 +463,16 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
           ]}
           data={nodes}
           getRowKey={(node) => node.id}
+          getRowLabel={(node) => node.node_name}
           searchPlaceholder="Search devices..."
           emptyMessage="No devices found."
           pageSize={10}
+          selectable
+          bulkActions={(selectedNodes, clearSelection) => (
+            <button className="btn btn-sm text-error" onClick={() => handleBulkDeleteNodes(selectedNodes, clearSelection)}>
+              Delete {selectedNodes.length} device{selectedNodes.length === 1 ? '' : 's'}
+            </button>
+          )}
         />
       )}
 

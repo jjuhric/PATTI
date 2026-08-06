@@ -159,6 +159,110 @@ describe('Chat Router Tests', () => {
     expect(checkDel).toBeUndefined();
   });
 
+  test('GET /api/chats/search - matches chat titles and message content, scoped to the requesting user', async () => {
+    const db = await mockTestDb;
+    const otherUser = await db.run("INSERT INTO users (username, password_hash) VALUES ('otherchatuser', 'hashed')");
+    const otherToken = jwt.sign({ id: otherUser.lastID, username: 'otherchatuser' }, JWT_SECRET);
+
+    const titleMatch = await db.run('INSERT INTO chats (user_id, title) VALUES (?, ?)', [userId, 'Kubernetes notes']);
+    const contentMatch = await db.run('INSERT INTO chats (user_id, title) VALUES (?, ?)', [userId, 'Chat 9:00 AM']);
+    await db.run(
+      "INSERT INTO messages (chat_id, role, content) VALUES (?, 'user', 'Can you explain how kubernetes handles pod scheduling?')",
+      [contentMatch.lastID]
+    );
+    const noMatch = await db.run('INSERT INTO chats (user_id, title) VALUES (?, ?)', [userId, 'Weekend plans']);
+    await db.run("INSERT INTO messages (chat_id, role, content) VALUES (?, 'user', 'What is the weather tomorrow?')", [noMatch.lastID]);
+    // Belongs to a different user - must never appear in this user's results even though it matches.
+    const otherUsersChat = await db.run('INSERT INTO chats (user_id, title) VALUES (?, ?)', [otherUser.lastID, 'kubernetes secrets']);
+
+    const res = await request(app)
+      .get('/api/chats/search')
+      .query({ q: 'kubernetes' })
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.statusCode).toBe(200);
+    const chatIds = res.body.map((r) => r.chatId);
+    expect(chatIds).toContain(titleMatch.lastID);
+    expect(chatIds).toContain(contentMatch.lastID);
+    expect(chatIds).not.toContain(noMatch.lastID);
+    expect(chatIds).not.toContain(otherUsersChat.lastID);
+
+    const contentResult = res.body.find((r) => r.chatId === contentMatch.lastID);
+    expect(contentResult.snippet.toLowerCase()).toContain('kubernetes');
+
+    // The other user's own search still finds their own matching chat.
+    const otherRes = await request(app)
+      .get('/api/chats/search')
+      .query({ q: 'kubernetes' })
+      .set('Authorization', `Bearer ${otherToken}`);
+    expect(otherRes.body.map((r) => r.chatId)).toEqual([otherUsersChat.lastID]);
+  });
+
+  test('GET /api/chats/search - a query under 2 characters returns an empty array without querying the db', async () => {
+    const res = await request(app)
+      .get('/api/chats/search')
+      .query({ q: 'k' })
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual([]);
+
+    const resEmpty = await request(app)
+      .get('/api/chats/search')
+      .set('Authorization', `Bearer ${token}`);
+    expect(resEmpty.body).toEqual([]);
+  });
+
+  test('GET /api/chats/search - LIKE wildcard characters in the query are escaped, not treated as wildcards', async () => {
+    const db = await mockTestDb;
+    const wildcardChat = await db.run('INSERT INTO chats (user_id, title) VALUES (?, ?)', [userId, 'Discount: 50% off']);
+    await db.run('INSERT INTO chats (user_id, title) VALUES (?, ?)', [userId, 'Totally unrelated title']);
+
+    const res = await request(app)
+      .get('/api/chats/search')
+      .query({ q: '50%' })
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.map((r) => r.chatId)).toEqual([wildcardChat.lastID]);
+  });
+
+  test('GET /api/chats/search - database failure returns 500', async () => {
+    mockDbError = true;
+    const res = await request(app)
+      .get('/api/chats/search')
+      .query({ q: 'kubernetes' })
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.statusCode).toBe(500);
+  });
+
+  describe('buildSnippet', () => {
+    const { buildSnippet } = chatRouter;
+
+    test('returns short text unchanged with no ellipses', () => {
+      expect(buildSnippet('Short message.', 'short')).toBe('Short message.');
+    });
+
+    test('truncates long text with no match to the start, with a trailing ellipsis', () => {
+      const longText = 'a'.repeat(300);
+      const result = buildSnippet(longText, 'zzz-not-present');
+      expect(result.endsWith('…')).toBe(true);
+      expect(result.length).toBeLessThan(longText.length);
+    });
+
+    test('centers the excerpt on the match, with ellipses on both sides when truncated', () => {
+      const text = `${'x'.repeat(100)}FINDME${'y'.repeat(100)}`;
+      const result = buildSnippet(text, 'findme'); // case-insensitive match
+      expect(result.startsWith('…')).toBe(true);
+      expect(result.endsWith('…')).toBe(true);
+      expect(result).toContain('FINDME');
+    });
+
+    test('returns empty string for empty/null text', () => {
+      expect(buildSnippet('', 'term')).toBe('');
+      expect(buildSnippet(null, 'term')).toBe('');
+    });
+  });
+
   test('POST /api/chat/stream - SSE streaming and thinking process XML/channel parsing', async () => {
     const db = await mockTestDb;
     const insertRes = await db.run('INSERT INTO chats (user_id, title) VALUES (?, ?)', [userId, 'Stream Chat']);

@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import AgentDashboard from './AgentDashboard';
 
@@ -69,5 +69,57 @@ describe('AgentDashboard Component Tests', () => {
   test('shows the empty-state message when there are no online nodes', () => {
     render(<AgentDashboard nodes={[]} token="t" handleDeleteNode={() => {}} activeSubTab="nodes" />);
     expect(screen.getByText('No online nodes found.')).toBeInTheDocument();
+  });
+
+  // FEAT-3 (docs/REVIEW_2026-08-03.md): bulk delete for the Nodes table.
+  describe('bulk delete', () => {
+    const mockNodes = [
+      { id: 1, node_name: 'Node One', device_type: 'RPi', ip_address: '192.168.1.50', port: 3000, is_online: 1 },
+      { id: 2, node_name: 'Node Two', device_type: 'RPi', ip_address: '192.168.1.51', port: 3000, is_online: 1 }
+    ];
+
+    beforeEach(() => {
+      global.fetch = vi.fn(() => Promise.resolve({ ok: true, json: async () => ({}) }));
+    });
+
+    test('routes the bulk-delete confirmation through onRequestConfirm when provided', async () => {
+      const onRequestConfirm = vi.fn();
+      const onRefresh = vi.fn();
+      render(
+        <AgentDashboard
+          nodes={mockNodes}
+          token="t"
+          handleDeleteNode={() => {}}
+          onRefresh={onRefresh}
+          activeSubTab="nodes"
+          onRequestConfirm={onRequestConfirm}
+        />
+      );
+
+      fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+      fireEvent.click(screen.getByRole('button', { name: 'Delete 2 nodes' }));
+
+      expect(onRequestConfirm).toHaveBeenCalledWith(expect.objectContaining({
+        message: 'Delete 2 nodes? This cannot be undone.'
+      }));
+      expect(global.fetch).not.toHaveBeenCalled();
+
+      await onRequestConfirm.mock.calls[0][0].onConfirm();
+      expect(global.fetch.mock.calls.some(([url, opts]) => url === '/api/nodes/1' && opts?.method === 'DELETE')).toBe(true);
+      expect(global.fetch.mock.calls.some(([url, opts]) => url === '/api/nodes/2' && opts?.method === 'DELETE')).toBe(true);
+      expect(onRefresh).toHaveBeenCalled();
+    });
+
+    test('falls back to window.confirm when onRequestConfirm is not provided', () => {
+      const windowConfirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      render(<AgentDashboard nodes={mockNodes} token="t" handleDeleteNode={() => {}} activeSubTab="nodes" />);
+
+      fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+      fireEvent.click(screen.getByRole('button', { name: 'Delete 2 nodes' }));
+
+      expect(windowConfirmSpy).toHaveBeenCalledWith('Delete 2 nodes? This cannot be undone.');
+      expect(global.fetch).not.toHaveBeenCalled();
+      windowConfirmSpy.mockRestore();
+    });
   });
 });
