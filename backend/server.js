@@ -259,7 +259,7 @@ app.get('/monitor', (req, res, next) => {
   next();
 });
 app.use('/monitor', express.static(monitorBuildPath));
-app.get('/monitor/*', (req, res) => {
+app.get('/monitor/*splat', (req, res) => {
   const monitorIndexPath = path.join(monitorBuildPath, 'index.html');
   if (!fs.existsSync(monitorIndexPath)) {
     return res.status(404).send('Monitor dashboard not built on this device. Run "npm run build" in monitor_dashboard folder.');
@@ -308,7 +308,7 @@ app.post('/api/tts', authenticateToken, async (req, res) => {
 });
 
 // Fallback route to serve index.html for React/Vite single page app router
-app.get('*', (req, res, next) => {
+app.get('/*splat', (req, res, next) => {
   if (req.path.startsWith('/api') || req.path.startsWith('/monitor')) {
     return next();
   }
