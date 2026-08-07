@@ -258,7 +258,7 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
   return (
     <div className="chat-pane" style={{ overflowY: 'auto', padding: '24px' }}>
       <div style={{ marginBottom: '20px' }}>
-        <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: '#fff' }}>Admin Dashboard</h2>
+        <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Admin Dashboard</h2>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
           Manage users, network devices, and the database.
         </p>
@@ -278,9 +278,12 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
               fontSize: '0.85rem',
               borderRadius: '8px',
               fontWeight: 600,
-              background: section === item.key ? 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))' : 'rgba(255,255,255,0.05)',
+              background: section === item.key ? 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))' : 'var(--bg-glass)',
               border: '1px solid var(--border-glass)',
-              color: '#fff',
+              // The active tab's gradient background is always vivid enough for white text in
+              // either theme, but the inactive state's background is theme-adaptive - #fff text
+              // on it would be unreadable in light mode.
+              color: section === item.key ? '#fff' : 'var(--text-primary)',
               cursor: 'pointer'
             }}
           >
@@ -591,9 +594,9 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
           {dbMessage && <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 12 }}>{dbMessage}</div>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
             {dbStats && Object.entries(dbStats).map(([table, count]) => (
-              <div key={table} style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: 8, border: '1px solid var(--border-glass)' }}>
+              <div key={table} style={{ background: 'var(--bg-glass)', padding: '12px', borderRadius: 8, border: '1px solid var(--border-glass)' }}>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{table}</div>
-                <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#fff' }}>{count}</div>
+                <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--text-primary)' }}>{count}</div>
               </div>
             ))}
           </div>

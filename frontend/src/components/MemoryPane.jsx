@@ -192,7 +192,7 @@ export default function MemoryPane({ memories, onAddMemory, onDeleteMemory, onBu
                         onClick={() => onDeleteMemory(mem.id)} 
                         className="btn-icon" 
                         style={{
-                          color: '#ef4444',
+                          color: 'var(--error)',
                           padding: '8px',
                           background: 'rgba(239, 68, 68, 0.08)',
                           borderRadius: '8px',
@@ -278,7 +278,7 @@ export default function MemoryPane({ memories, onAddMemory, onDeleteMemory, onBu
                         onClick={() => onDeleteMemory(mem.id)} 
                         className="btn-icon" 
                         style={{
-                          color: '#ef4444',
+                          color: 'var(--error)',
                           padding: '8px',
                           background: 'rgba(239, 68, 68, 0.08)',
                           borderRadius: '8px',
