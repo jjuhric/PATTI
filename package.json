@@ -22,7 +22,8 @@
     "test:e2e": "npm run build && node -e \"const fs = require('fs'); ['backend/test_database.db', 'backend/test_database.db-shm', 'backend/test_database.db-wal'].forEach(f => fs.existsSync(f) && fs.unlinkSync(f))\" && npx playwright test",
     "coverage:backend": "npm run test:coverage --prefix backend",
     "coverage:frontend": "npm run test:coverage --prefix frontend",
-    "coverage": "npm run coverage:backend && npm run coverage:frontend"
+    "coverage": "npm run coverage:backend && npm run coverage:frontend",
+    "check:dedup": "node scripts/check_dedup_drift.js"
   },
   "dependencies": {
     "concurrently": "^10.0.4",

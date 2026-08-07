@@ -17,8 +17,11 @@ import { useMemo, useCallback } from 'react';
  * doesn't support.
  *
  * monitor_dashboard/src/useApi.js is a duplicate of this file, not a shared import -
- * monitor_dashboard is a separate Vite app with no shared workspace (see BUG-5,
- * docs/REVIEW_2026-08-03.md). Keep the two copies in sync by hand.
+ * monitor_dashboard is a separate Vite app with its own node_modules and no shared workspace
+ * (see BUG-5, docs/REVIEW_2026-08-03.md), same as the other files duplicated between the two
+ * apps (CustomAlertModal.jsx, RpiTerminalModal.jsx, TokenCountView.jsx, TokenChart.jsx,
+ * LMStudioLogsView.jsx). Keep the two copies in sync by hand - `npm run check:dedup` at the
+ * repo root fails CI if they drift.
  */
 export function useApi(token) {
   const request = useCallback(async (url, { method = 'GET', body, headers, signal } = {}) => {
