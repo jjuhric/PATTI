@@ -349,6 +349,10 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
                 key: 'total_used_24h',
                 label: '24h Usage',
                 sortable: true,
+                // A render-only column with no searchValue is silently excluded from both
+                // search and export (see DataTable.jsx's defaultSearchValue) - this one has a
+                // real underlying number worth both, so give it one.
+                searchValue: (u) => u.total_used_24h,
                 render: (u) => `${u.total_used_24h.toLocaleString()} tokens`
               },
               {
@@ -390,6 +394,8 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
             searchPlaceholder="Search users..."
             emptyMessage="No users found."
             pageSize={10}
+            exportable
+            exportFilename="patti-users"
             selectable
             bulkActions={(selectedUsers, clearSelection) => {
               const targets = selectedUsers.filter((u) => u.id !== currentUserId);
@@ -467,6 +473,8 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
           searchPlaceholder="Search devices..."
           emptyMessage="No devices found."
           pageSize={10}
+          exportable
+          exportFilename="patti-devices"
           selectable
           bulkActions={(selectedNodes, clearSelection) => (
             <button className="btn btn-sm text-error" onClick={() => handleBulkDeleteNodes(selectedNodes, clearSelection)}>

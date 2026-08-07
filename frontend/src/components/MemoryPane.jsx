@@ -1,5 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Brain, Trash2, Clock, PlusCircle } from 'lucide-react';
+import { Brain, Trash2, Clock, PlusCircle, Download } from 'lucide-react';
+import { exportAsCSV, exportAsJSON } from '../utils/export';
+
+const MEMORY_EXPORT_COLUMNS = [
+  { key: 'content', label: 'Content' },
+  { key: 'level', label: 'Retention' },
+  { key: 'expires_at', label: 'Expires At' },
+  { key: 'created_at', label: 'Created At' }
+];
 
 export default function MemoryPane({ memories, onAddMemory, onDeleteMemory, onBulkDeleteMemories = () => {} }) {
   const [newContent, setNewContent] = useState('');
@@ -68,24 +76,40 @@ export default function MemoryPane({ memories, onAddMemory, onDeleteMemory, onBu
     return `Expires in ${diffDays} days`;
   };
 
+  // FEAT-4 (docs/REVIEW_2026-08-03.md): export every memory (long-term + short-term together).
+  const handleExportCSV = () => exportAsCSV('patti-memories.csv', memories, MEMORY_EXPORT_COLUMNS);
+  const handleExportJSON = () => exportAsJSON('patti-memories.json', memories);
+
   return (
     <div className="chat-pane" style={{ overflowY: 'auto' }}>
       <div style={{ padding: '24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '28px' }}>
-          <div style={{
-            background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(6, 182, 212, 0.2))',
-            padding: '12px',
-            borderRadius: '16px',
-            border: '1px solid var(--border-glass)'
-          }}>
-            <Brain size={32} style={{ color: 'var(--accent-secondary)' }} />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '28px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(6, 182, 212, 0.2))',
+              padding: '12px',
+              borderRadius: '16px',
+              border: '1px solid var(--border-glass)'
+            }}>
+              <Brain size={32} style={{ color: 'var(--accent-secondary)' }} />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 650 }}>AI Memory Vault</h3>
+              <p style={{ margin: '4px 0 0 0', color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
+                These are facts and preferences the AI has retained about you.
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 650 }}>AI Memory Vault</h3>
-            <p style={{ margin: '4px 0 0 0', color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
-              These are facts and preferences the AI has retained about you.
-            </p>
-          </div>
+          {memories.length > 0 && (
+            <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={handleExportCSV} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                <Download size={13} /> CSV
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={handleExportJSON} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                <Download size={13} /> JSON
+              </button>
+            </div>
+          )}
         </div>
 
         {selectedIds.size > 0 && (

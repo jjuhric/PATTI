@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, BarChart2 } from 'lucide-react';
+import { RefreshCw, BarChart2, Download } from 'lucide-react';
 import TokenChart from './TokenChart';
+import { exportAsCSV, exportAsJSON } from './export';
+
+const TOKEN_USAGE_EXPORT_COLUMNS = [
+  { key: 'model_name', label: 'Model' },
+  { key: 'provider_type', label: 'Local or Online' },
+  { key: 'total_tokens', label: 'Tokens' }
+];
 
 export default function TokenCountView({ token }) {
   const [tokenData, setTokenData] = useState(null);
@@ -93,6 +100,12 @@ export default function TokenCountView({ token }) {
     return buckets;
   };
 
+  // FEAT-4 (docs/REVIEW_2026-08-03.md): export the per-model usage table for the selected
+  // timeframe.
+  const tableRows = (tokenData && tokenData.tableData) || [];
+  const handleExportCSV = () => exportAsCSV(`patti-token-usage-${tokenTimeframe}.csv`, tableRows, TOKEN_USAGE_EXPORT_COLUMNS);
+  const handleExportJSON = () => exportAsJSON(`patti-token-usage-${tokenTimeframe}.json`, tableRows);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       {/* Timeframe Selector and KPI Row */}
@@ -128,6 +141,25 @@ export default function TokenCountView({ token }) {
           <RefreshCw size={14} className={loadingTokens ? 'animate-spin' : ''} />
           Refresh
         </button>
+
+        {tableRows.length > 0 && (
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={handleExportCSV}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', padding: '6px 12px' }}
+            >
+              <Download size={14} /> CSV
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={handleExportJSON}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', padding: '6px 12px' }}
+            >
+              <Download size={14} /> JSON
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Overall Token Count Card */}
