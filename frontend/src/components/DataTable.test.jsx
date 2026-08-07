@@ -1,7 +1,13 @@
 import React from 'react';
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import DataTable from './DataTable';
+import * as exportUtils from '../utils/export';
+
+vi.mock('../utils/export', () => ({
+  exportAsCSV: vi.fn(),
+  exportAsJSON: vi.fn()
+}));
 
 const users = [
   { id: 1, username: 'charlie', age: 40 },
@@ -221,6 +227,80 @@ describe('DataTable', () => {
         />
       );
       expect(screen.getByLabelText('Select user charlie')).toBeInTheDocument();
+    });
+  });
+
+  // FEAT-4 (docs/REVIEW_2026-08-03.md): CSV/JSON export.
+  describe('export', () => {
+    beforeEach(() => {
+      exportUtils.exportAsCSV.mockClear();
+      exportUtils.exportAsJSON.mockClear();
+    });
+
+    test('no export buttons render when exportable is false (the default)', () => {
+      render(<DataTable columns={columns} data={users} getRowKey={(r) => r.id} />);
+      expect(screen.queryByText('CSV')).not.toBeInTheDocument();
+      expect(screen.queryByText('JSON')).not.toBeInTheDocument();
+    });
+
+    test('Export CSV passes the current sorted/filtered rows and derived columns', () => {
+      render(<DataTable columns={columns} data={users} getRowKey={(r) => r.id} exportable exportFilename="my-users" pageSize={null} />);
+      fireEvent.click(screen.getByText('CSV'));
+
+      expect(exportUtils.exportAsCSV).toHaveBeenCalledTimes(1);
+      const [filename, rows, exportCols] = exportUtils.exportAsCSV.mock.calls[0];
+      expect(filename).toBe('my-users.csv');
+      expect(rows).toEqual(users);
+      expect(exportCols.map((c) => c.label)).toEqual(['Username', 'Age']);
+    });
+
+    test('Export JSON passes the raw row objects for the current sorted/filtered set', () => {
+      render(<DataTable columns={columns} data={users} getRowKey={(r) => r.id} exportable exportFilename="my-users" pageSize={null} />);
+      fireEvent.click(screen.getByText('JSON'));
+
+      expect(exportUtils.exportAsJSON).toHaveBeenCalledWith('my-users.json', users);
+    });
+
+    test('export respects the active search filter', () => {
+      render(<DataTable columns={columns} data={users} getRowKey={(r) => r.id} exportable exportFilename="my-users" searchPlaceholder="Search..." pageSize={null} />);
+      fireEvent.change(screen.getByPlaceholderText('Search...'), { target: { value: 'ali' } });
+      fireEvent.click(screen.getByText('JSON'));
+
+      expect(exportUtils.exportAsJSON).toHaveBeenCalledWith('my-users.json', [users[1]]); // alice only
+    });
+
+    test('a column with searchable: false is excluded from the default export columns', () => {
+      const withAction = [...columns, { key: 'actions', label: 'Actions', searchable: false, render: () => null }];
+      render(<DataTable columns={withAction} data={users} getRowKey={(r) => r.id} exportable exportFilename="my-users" />);
+      fireEvent.click(screen.getByText('CSV'));
+
+      const exportCols = exportUtils.exportAsCSV.mock.calls[0][2];
+      expect(exportCols.map((c) => c.label)).toEqual(['Username', 'Age']);
+    });
+
+    test('exportColumns overrides the default derived column set', () => {
+      render(
+        <DataTable
+          columns={columns}
+          data={users}
+          getRowKey={(r) => r.id}
+          exportable
+          exportFilename="my-users"
+          exportColumns={[{ key: 'username', label: 'Only This' }]}
+        />
+      );
+      fireEvent.click(screen.getByText('CSV'));
+
+      const exportCols = exportUtils.exportAsCSV.mock.calls[0][2];
+      expect(exportCols).toEqual([{ key: 'username', label: 'Only This' }]);
+    });
+
+    test('export covers every matching row across all pages, not just the current page', () => {
+      const many = Array.from({ length: 25 }, (_, i) => ({ id: i, username: `user${i}`, age: i }));
+      render(<DataTable columns={columns} data={many} getRowKey={(r) => r.id} exportable exportFilename="many" pageSize={10} />);
+      fireEvent.click(screen.getByText('JSON'));
+
+      expect(exportUtils.exportAsJSON.mock.calls[0][1]).toHaveLength(25);
     });
   });
 });

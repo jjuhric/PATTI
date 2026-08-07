@@ -191,6 +191,8 @@ export default function AgentDashboard({ nodes = [], token, handleDeleteNode, on
             searchPlaceholder="Search nodes..."
             emptyMessage="No online nodes found."
             pageSize={10}
+            exportable
+            exportFilename="patti-nodes"
             selectable
             bulkActions={(selectedNodes, clearSelection) => (
               <button className="btn btn-sm text-error" onClick={() => handleBulkDeleteNodes(selectedNodes, clearSelection)}>

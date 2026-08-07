@@ -1145,6 +1145,7 @@ function App() {
             settings={settings}
             messages={messages}
             activeChatId={activeChatId}
+            chatTitle={chats.find((c) => c.id === activeChatId)?.title}
             isStreaming={isStreaming}
             streamThoughts={streamThoughts}
             streamContent={streamContent}
@@ -1276,6 +1277,7 @@ function App() {
             settings={settings}
             messages={messages}
             activeChatId={activeChatId}
+            chatTitle={chats.find((c) => c.id === activeChatId)?.title}
             isStreaming={isStreaming}
             streamThoughts={streamThoughts}
             streamContent={streamContent}
