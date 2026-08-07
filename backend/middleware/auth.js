@@ -7,9 +7,16 @@ if (!process.env.JWT_SECRET && !isTest) {
 }
 const JWT_SECRET = process.env.JWT_SECRET || 'test_secret_key_patti_assistant_2026';
 
-async function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = (authHeader && authHeader.split(' ')[1]) || req.query.token;
+// SEC-5: name of the httpOnly cookie set on login (backend/routes/auth.js). Only
+// authenticateTokenOrCookie (below) ever accepts it - every mutating route and most GETs stay
+// on authenticateToken (Authorization header only), so a forged cross-site request that only
+// carries the cookie can never reach a state-changing endpoint. That keeps the blast radius of
+// accepting a cookie at all limited to a small safelist of GET-based streaming/media routes
+// that browser APIs (EventSource, WebSocket upgrade, <img src>, window.open downloads) can't
+// attach a custom Authorization header to - no separate CSRF-token scheme needed.
+const AUTH_COOKIE_NAME = 'patti_token';
+
+async function verifyAndAttachUser(token, req, res, next) {
   if (!token) return res.status(401).json({ error: 'Access token required.' });
 
   jwt.verify(token, JWT_SECRET, async (err, user) => {
@@ -40,4 +47,18 @@ async function authenticateToken(req, res, next) {
   });
 }
 
-module.exports = { authenticateToken, JWT_SECRET };
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  return verifyAndAttachUser(token, req, res, next);
+}
+
+// SEC-5: use only on GET-based streaming/media routes that browser APIs can't attach an
+// Authorization header to. Never wire this into a route that changes state.
+function authenticateTokenOrCookie(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = (authHeader && authHeader.split(' ')[1]) || (req.cookies && req.cookies[AUTH_COOKIE_NAME]);
+  return verifyAndAttachUser(token, req, res, next);
+}
+
+module.exports = { authenticateToken, authenticateTokenOrCookie, JWT_SECRET, AUTH_COOKIE_NAME };

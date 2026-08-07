@@ -105,7 +105,9 @@ export default function RpiTerminalModal({ isOpen, onClose, node, token, onNodeU
 
     // Connect to WebSocket
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/terminal?token=${encodeURIComponent(token)}&ip=${encodeURIComponent(node.ip_address)}`;
+    // SEC-5: no ?token= here - the httpOnly auth cookie set on login is sent automatically on
+    // this same-origin WebSocket upgrade (see terminal_service.js's cookie-based auth).
+    const wsUrl = `${protocol}//${window.location.host}/api/terminal?ip=${encodeURIComponent(node.ip_address)}`;
     
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;

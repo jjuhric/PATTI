@@ -497,7 +497,7 @@ export default function ChatPane({
                   att.kind === 'image' ? (
                     <img
                       key={att.id}
-                      src={`/api/attachments/${att.id}/file?token=${token}`}
+                      src={`/api/attachments/${att.id}/file`}
                       alt={att.filename}
                       style={{ maxWidth: 160, maxHeight: 160, borderRadius: 8, border: '1px solid var(--border-glass)' }}
                     />

@@ -246,7 +246,9 @@ export default function AdminDashboard({ token, currentUserId, nodes = [], handl
   };
 
   const handleDbBackup = () => {
-    window.open(`/api/admin/db/backup?token=${encodeURIComponent(token)}`, '_blank');
+    // SEC-5: no ?token= here - the httpOnly auth cookie set on login is sent automatically for
+    // this same-origin request (see authenticateTokenOrCookie in backend/routes/admin.js).
+    window.open('/api/admin/db/backup', '_blank');
   };
 
   const navItems = [
