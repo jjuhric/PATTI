@@ -95,8 +95,9 @@ export default function LMStudioLogsView({ token }) {
   };
 
   useEffect(() => {
-    let url = `/api/lmstudio/log-stream?token=${encodeURIComponent(token)}`;
-    const eventSource = new EventSource(url);
+    // SEC-5: no ?token= here - the httpOnly auth cookie set on login is sent automatically for
+    // this same-origin request (see authenticateTokenOrCookie in backend/routes/lmstudio.js).
+    const eventSource = new EventSource('/api/lmstudio/log-stream');
     eventSourceRef.current = eventSource;
 
     eventSource.onopen = () => {

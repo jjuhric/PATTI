@@ -210,8 +210,9 @@ function App() {
         console.warn('[Alert Stream] EventSource is not defined in this environment.');
         return;
       }
-      const url = `/api/alerts/stream?token=${encodeURIComponent(token)}`;
-      eventSource = new EventSource(url);
+      // SEC-5: no ?token= here - the httpOnly auth cookie set on login is sent automatically
+      // for this same-origin request (see authenticateTokenOrCookie in backend/middleware/auth.js).
+      eventSource = new EventSource('/api/alerts/stream');
 
       eventSource.onmessage = (event) => {
         try {
@@ -383,6 +384,10 @@ function App() {
   };
 
   const handleLogout = () => {
+    // SEC-5: the auth cookie is httpOnly, so it can't be cleared from JS directly - ask the
+    // backend to drop it. Not awaited: dropping the local token below shouldn't wait on it,
+    // and it works even if the current token is already expired/invalid.
+    api.post('/api/auth/logout').catch(() => {});
     setToken('');
     localStorage.removeItem('token');
     setIsChatPoppedOut(false);

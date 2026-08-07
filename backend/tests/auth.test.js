@@ -1,5 +1,6 @@
 const request = require('supertest');
 const express = require('express');
+const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 
 // Mock db.js to use an in-memory database
@@ -27,9 +28,10 @@ jest.mock('../db', () => {
 });
 
 const authRouter = require('../routes/auth');
-const { JWT_SECRET } = require('../middleware/auth');
+const { JWT_SECRET, AUTH_COOKIE_NAME } = require('../middleware/auth');
 const app = express();
 app.use(express.json());
+app.use(cookieParser());
 app.use('/api/auth', authRouter);
 
 describe('Auth Router Tests', () => {
@@ -250,6 +252,47 @@ describe('Auth Router Tests', () => {
     const freshToken = jwt.sign({ id: userId, username: 'cutoffuser', iat: freshIat }, JWT_SECRET);
     const freshRes = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${freshToken}`);
     expect(freshRes.statusCode).toBe(200);
+  });
+
+  test('POST /api/auth/login sets an httpOnly auth cookie (SEC-5)', async () => {
+    await request(app).post('/api/auth/register').send({ username: 'cookieuser', password: 'password123' });
+
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ username: 'cookieuser', password: 'password123' });
+
+    expect(res.statusCode).toBe(200);
+    const setCookie = res.headers['set-cookie'];
+    expect(setCookie).toBeDefined();
+    const authCookie = setCookie.find((c) => c.startsWith(`${AUTH_COOKIE_NAME}=`));
+    expect(authCookie).toBeDefined();
+    expect(authCookie).toContain('HttpOnly');
+    expect(authCookie).toContain(`${AUTH_COOKIE_NAME}=${res.body.token}`);
+  });
+
+  test('POST /api/auth/logout clears the auth cookie without requiring authentication (SEC-5)', async () => {
+    const res = await request(app).post('/api/auth/logout');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    const setCookie = res.headers['set-cookie'];
+    const authCookie = setCookie.find((c) => c.startsWith(`${AUTH_COOKIE_NAME}=`));
+    expect(authCookie).toBeDefined();
+    expect(authCookie).toMatch(/Expires=Thu, 01 Jan 1970/);
+  });
+
+  test('POST /api/auth/logout-everywhere also clears the auth cookie (SEC-5)', async () => {
+    await request(app).post('/api/auth/register').send({ username: 'cookierevoke', password: 'password123' });
+    const loginRes = await request(app).post('/api/auth/login').send({ username: 'cookierevoke', password: 'password123' });
+
+    const res = await request(app)
+      .post('/api/auth/logout-everywhere')
+      .set('Authorization', `Bearer ${loginRes.body.token}`);
+
+    expect(res.statusCode).toBe(200);
+    const setCookie = res.headers['set-cookie'];
+    const authCookie = setCookie.find((c) => c.startsWith(`${AUTH_COOKIE_NAME}=`));
+    expect(authCookie).toBeDefined();
+    expect(authCookie).toMatch(/Expires=Thu, 01 Jan 1970/);
   });
 
   test('error paths - database failure catches', async () => {

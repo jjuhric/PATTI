@@ -5,7 +5,24 @@ const { getDb } = require('../db');
 const { decrypt } = require('../utils/crypto');
 const logger = require('../utils/logger');
 
-const { JWT_SECRET } = require('../middleware/auth');
+const { JWT_SECRET, AUTH_COOKIE_NAME } = require('../middleware/auth');
+
+// SEC-5: the browser WebSocket API can't attach a custom Authorization header, and this
+// connection is upgraded directly on the raw HTTP server (before Express/cookie-parser ever
+// see the request), so the httpOnly auth cookie has to be read straight off the raw `Cookie`
+// header here.
+function getCookieFromRequest(request, name) {
+  const header = request.headers.cookie;
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) {
+      return decodeURIComponent(part.slice(idx + 1).trim());
+    }
+  }
+  return null;
+}
 
 function init(server) {
   const wss = new WebSocket.Server({ noServer: true });
@@ -26,7 +43,7 @@ function init(server) {
 
     // Extract search params
     const reqUrl = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
-    const token = reqUrl.searchParams.get('token');
+    const token = getCookieFromRequest(request, AUTH_COOKIE_NAME);
     const ip = reqUrl.searchParams.get('ip');
 
     if (!token || !ip) {
