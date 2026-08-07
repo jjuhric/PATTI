@@ -7,6 +7,22 @@ on:
     branches: [main]
 
 jobs:
+  # BUG-5 (docs/REVIEW_2026-08-03.md): frontend/ and monitor_dashboard/ share a handful of
+  # files maintained as byte-identical copies by hand (no shared workspace between the two
+  # apps). This catches drift the moment a PR introduces it instead of waiting for the next
+  # manual audit. No dependency install needed - the check script is pure Node.
+  component-dedup-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Check frontend/monitor_dashboard shared files haven't drifted
+        run: npm run check:dedup
+
   dependency-audit:
     runs-on: ubuntu-latest
     steps:

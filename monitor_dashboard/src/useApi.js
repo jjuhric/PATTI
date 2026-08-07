@@ -1,8 +1,8 @@
 import { useMemo, useCallback } from 'react';
 
 /**
- * FEAT-9 (docs/REVIEW_2026-08-03.md): every fetch call across App.jsx re-derives the same
- * boilerplate by hand - attach `Authorization: Bearer <token>`, set
+ * FEAT-9 (docs/REVIEW_2026-08-03.md): every fetch call across App.jsx (and other panes)
+ * re-derives the same boilerplate by hand - attach `Authorization: Bearer <token>`, set
  * `Content-Type: application/json` when there's a body, check `res.ok`, parse JSON, and
  * try/catch network failures. This hook centralizes exactly that, and nothing more: no
  * caching, no retries, no loading-state management - callers still own their own useState
@@ -12,11 +12,16 @@ import { useMemo, useCallback } from 'react';
  * Returns a consistent `{ ok, status, data, error }` shape instead of `res.ok`/`res.json()`,
  * so a failed request never needs a second `res.json()` call just to read the error body.
  *
- * This is a duplicate of frontend/src/hooks/useApi.js, not a shared import - monitor_dashboard
- * is a separate Vite app with its own node_modules and no shared workspace (see BUG-5,
- * docs/REVIEW_2026-08-03.md), same as the other files already duplicated between the two apps
- * (CustomAlertModal.jsx, RpiTerminalModal.jsx, TokenCountView.jsx, TokenChart.jsx). Keep the two
- * copies in sync by hand until that structural de-duplication happens.
+ * Deliberately NOT used for the SSE chat stream (`/api/chat/stream`) - that call needs the
+ * raw, unparsed `Response` to read its body via `getReader()`, which this JSON-only wrapper
+ * doesn't support.
+ *
+ * monitor_dashboard/src/useApi.js is a duplicate of this file, not a shared import -
+ * monitor_dashboard is a separate Vite app with its own node_modules and no shared workspace
+ * (see BUG-5, docs/REVIEW_2026-08-03.md), same as the other files duplicated between the two
+ * apps (CustomAlertModal.jsx, RpiTerminalModal.jsx, TokenCountView.jsx, TokenChart.jsx,
+ * LMStudioLogsView.jsx). Keep the two copies in sync by hand - `npm run check:dedup` at the
+ * repo root fails CI if they drift.
  */
 export function useApi(token) {
   const request = useCallback(async (url, { method = 'GET', body, headers, signal } = {}) => {
