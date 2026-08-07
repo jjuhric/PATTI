@@ -1,9 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Search, Send, Square, Cpu, CloudSun, Newspaper, FileText, Volume2, VolumeX, Paperclip, X, Image as ImageIcon } from 'lucide-react';
+import { Calendar, Search, Send, Square, Cpu, CloudSun, Newspaper, FileText, Volume2, VolumeX, Paperclip, X, Image as ImageIcon, Download } from 'lucide-react';
 import { marked } from 'marked';
 import mermaid from 'mermaid';
 import ExpandableThoughts from './ExpandableThoughts';
 import BackgroundJobBanner from './BackgroundJobBanner';
+import { exportAsCSV, exportAsJSON } from '../utils/export';
+
+// FEAT-4 (docs/REVIEW_2026-08-03.md): a slug-safe filename base from the chat title, falling
+// back to the chat id when there's no title (or it's entirely punctuation/whitespace).
+function chatExportBasename(chatTitle, activeChatId) {
+  const slug = (chatTitle || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug ? `patti-chat-${slug}` : `patti-chat-${activeChatId}`;
+}
+
+const CHAT_EXPORT_COLUMNS = [
+  { key: 'role', label: 'Role' },
+  { key: 'content', label: 'Content' },
+  { key: 'created_at', label: 'Sent At' }
+];
 
 mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
 
@@ -56,6 +70,7 @@ export default function ChatPane({
   settings,
   messages,
   activeChatId,
+  chatTitle,
   isStreaming,
   streamThoughts,
   streamContent,
@@ -346,18 +361,44 @@ export default function ChatPane({
     setEditedCommands(prev => ({ ...prev, [commandId]: value }));
   };
 
+  // FEAT-4 (docs/REVIEW_2026-08-03.md): export the currently open chat's transcript.
+  const handleExportChatCSV = () => exportAsCSV(`${chatExportBasename(chatTitle, activeChatId)}.csv`, messages, CHAT_EXPORT_COLUMNS);
+  const handleExportChatJSON = () => exportAsJSON(`${chatExportBasename(chatTitle, activeChatId)}.json`, messages);
+
   return (
     <div className="chat-pane">
       {activeChatId && (
         <div style={{
           display: 'flex',
           justifyContent: 'flex-end',
+          alignItems: 'center',
+          gap: '8px',
           padding: '10px 20px',
           borderBottom: '1px solid var(--border-glass)',
           background: 'var(--bg-glass)',
           backdropFilter: 'blur(10px)',
           zIndex: 10
         }}>
+          {messages.length > 0 && (
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button
+                onClick={handleExportChatCSV}
+                className="btn btn-ghost btn-sm"
+                title="Export this chat as CSV"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+              >
+                <Download size={13} /> CSV
+              </button>
+              <button
+                onClick={handleExportChatJSON}
+                className="btn btn-ghost btn-sm"
+                title="Export this chat as JSON"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+              >
+                <Download size={13} /> JSON
+              </button>
+            </div>
+          )}
           <button
             onClick={toggleVoiceEnabled}
             className="btn-icon"
@@ -456,7 +497,7 @@ export default function ChatPane({
                   att.kind === 'image' ? (
                     <img
                       key={att.id}
-                      src={`/api/attachments/${att.id}/file?token=${token}`}
+                      src={`/api/attachments/${att.id}/file`}
                       alt={att.filename}
                       style={{ maxWidth: 160, maxHeight: 160, borderRadius: 8, border: '1px solid var(--border-glass)' }}
                     />

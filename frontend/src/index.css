@@ -1976,9 +1976,29 @@ select.form-control option {
   flex-direction: column;
   gap: 8px;
 }
+.data-table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+/* FEAT-4 (docs/REVIEW_2026-08-03.md): CSV/JSON export buttons, shown when a DataTable opts in
+   via the `exportable` prop. */
+.data-table-export-buttons {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.data-table-export-buttons button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
 .data-table-search {
   position: relative;
   max-width: 320px;
+  flex: 1;
 }
 .data-table-search .form-control {
   padding-left: 34px;

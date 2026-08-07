@@ -3,7 +3,20 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getDb } = require('../db');
-const { authenticateToken, JWT_SECRET } = require('../middleware/auth');
+const { authenticateToken, JWT_SECRET, AUTH_COOKIE_NAME } = require('../middleware/auth');
+
+// SEC-5: options for the httpOnly auth cookie, mirrored between the set on login and the
+// clear on logout so the browser recognizes them as the same cookie. `secure` follows the
+// actual connection (req.secure), not NODE_ENV, since server.js falls back to plain HTTP if
+// no TLS certificate is configured even in production - hardcoding `true` there would make the
+// cookie silently never get sent.
+function authCookieOptions(req) {
+  return {
+    httpOnly: true,
+    secure: req.secure,
+    sameSite: 'lax'
+  };
+}
 const rateLimit = require('express-rate-limit');
 
 const authLimiter = rateLimit({
@@ -77,6 +90,7 @@ router.post('/login', authLimiter, async (req, res) => {
     if (!isMatch) return res.status(400).json({ error: 'Invalid username or password.' });
 
     const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+    res.cookie(AUTH_COOKIE_NAME, token, { ...authCookieOptions(req), maxAge: 30 * 24 * 60 * 60 * 1000 });
     res.json({ token, user: { id: user.id, username: user.username } });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -90,10 +104,21 @@ router.post('/logout-everywhere', authenticateToken, async (req, res) => {
   try {
     const db = await getDb();
     await db.run('UPDATE users SET tokens_valid_after = CURRENT_TIMESTAMP WHERE id = ?', [req.user.id]);
+    res.clearCookie(AUTH_COOKIE_NAME, authCookieOptions(req));
     res.json({ success: true, message: 'All sessions have been logged out. You will need to log in again.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// SEC-5: the auth cookie is httpOnly, so client-side JS can't clear it itself on a normal
+// (single-device) logout - it just drops the token from localStorage and calls this to have
+// the browser drop the cookie too. Deliberately not gated behind authenticateToken: an
+// already-expired/invalid token should still be able to clear the cookie, and clearing it is
+// harmless either way.
+router.post('/logout', (req, res) => {
+  res.clearCookie(AUTH_COOKIE_NAME, authCookieOptions(req));
+  res.json({ success: true });
 });
 
 router.get('/me', authenticateToken, async (req, res) => {

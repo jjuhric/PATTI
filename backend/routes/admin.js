@@ -5,10 +5,32 @@ const os = require('os');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const { getDb } = require('../db');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, authenticateTokenOrCookie } = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/adminAuth');
 const { cleanupDuplicateNodes } = require('../utils/db_maintenance');
 const logger = require('../utils/logger');
+
+// SEC-5: window.open() can't attach a custom Authorization header, so the DB backup download
+// needs its own explicit authenticateTokenOrCookie chain (registered before the router-wide
+// authenticateToken below, so it doesn't also require the header) - see authenticateTokenOrCookie
+// in middleware/auth.js for why this is safe to scope this narrowly rather than loosening the
+// whole router.
+router.get('/db/backup', authenticateTokenOrCookie, requireAdmin, async (req, res) => {
+  const backupPath = path.join(os.tmpdir(), `patti_backup_${Date.now()}.db`);
+  try {
+    const db = await getDb();
+    if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
+    await db.run('VACUUM INTO ?', [backupPath]);
+
+    res.download(backupPath, `patti_backup_${Date.now()}.db`, (err) => {
+      if (err) logger.error('Failed to stream DB backup download:', err);
+      fs.unlink(backupPath, () => {});
+    });
+  } catch (err) {
+    fs.unlink(backupPath, () => {});
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.use(authenticateToken, requireAdmin);
 
@@ -195,24 +217,6 @@ router.post('/db/cleanup-duplicate-nodes', async (req, res) => {
     const result = await cleanupDuplicateNodes(db);
     res.json({ success: true, ...result });
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Download a consistent point-in-time backup of the database
-router.get('/db/backup', async (req, res) => {
-  const backupPath = path.join(os.tmpdir(), `patti_backup_${Date.now()}.db`);
-  try {
-    const db = await getDb();
-    if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
-    await db.run('VACUUM INTO ?', [backupPath]);
-
-    res.download(backupPath, `patti_backup_${Date.now()}.db`, (err) => {
-      if (err) logger.error('Failed to stream DB backup download:', err);
-      fs.unlink(backupPath, () => {});
-    });
-  } catch (err) {
-    fs.unlink(backupPath, () => {});
     res.status(500).json({ error: err.message });
   }
 });

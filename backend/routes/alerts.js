@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateTokenOrCookie } = require('../middleware/auth');
 const logger = require('../utils/logger');
 
 // Maps each connected client's response stream to the userId that authenticated it.
@@ -12,7 +12,10 @@ const logger = require('../utils/logger');
 // param) get scoped to a single user's own connections.
 const activeClients = new Map();
 
-router.get('/stream', authenticateToken, (req, res) => {
+// SEC-5: EventSource can't attach a custom Authorization header, so this route accepts the
+// httpOnly auth cookie as a fallback (see authenticateTokenOrCookie) - it's a read-only GET,
+// so that's safe without a CSRF token.
+router.get('/stream', authenticateTokenOrCookie, (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');

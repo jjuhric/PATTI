@@ -18,13 +18,19 @@ const path = require('path');
 
 const repoRoot = path.join(__dirname, '..');
 
-// Add a pair here whenever a new file is deliberately duplicated between the two apps.
+// Add a pair here whenever a new file is deliberately duplicated between the two apps, expected
+// to stay byte-identical. Not every file that started as a duplicate belongs here forever -
+// three were deliberately dropped from this list:
+//   - LMStudioLogsView.jsx / RpiTerminalModal.jsx: SEC-5 scoped the httpOnly-cookie auth
+//     migration to frontend/ only, since monitor_dashboard's cross-origin remote-dashboard mode
+//     can't rely on a same-origin cookie - monitor_dashboard's copies intentionally stayed on
+//     ?token= query strings. These two are now permanently, deliberately different.
+//   - TokenCountView.jsx: frontend's copy is dead code (confirmed under ENH-5, never actually
+//     rendered), so FEAT-4's CSV/JSON export buttons were only added to monitor_dashboard's
+//     copy, the one that's actually live. Also now permanently different.
 const PAIRS = [
   ['frontend/src/components/CustomAlertModal.jsx', 'monitor_dashboard/src/CustomAlertModal.jsx'],
-  ['frontend/src/components/LMStudioLogsView.jsx', 'monitor_dashboard/src/LMStudioLogsView.jsx'],
-  ['frontend/src/components/RpiTerminalModal.jsx', 'monitor_dashboard/src/RpiTerminalModal.jsx'],
   ['frontend/src/components/TokenChart.jsx', 'monitor_dashboard/src/TokenChart.jsx'],
-  ['frontend/src/components/TokenCountView.jsx', 'monitor_dashboard/src/TokenCountView.jsx'],
   ['frontend/src/hooks/useApi.js', 'monitor_dashboard/src/useApi.js']
 ];
 

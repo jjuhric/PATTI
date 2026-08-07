@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { spawn } = require('child_process');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, authenticateTokenOrCookie } = require('../middleware/auth');
 const { getDb } = require('../db');
 const os = require('os');
 const path = require('path');
@@ -68,7 +68,8 @@ function parseLogLine(line) {
   return null;
 }
 
-router.get('/log-stream', authenticateToken, async (req, res) => {
+// SEC-5: EventSource can't attach a custom Authorization header - see authenticateTokenOrCookie.
+router.get('/log-stream', authenticateTokenOrCookie, async (req, res) => {
   try {
     const db = await getDb();
     const settings = await db.get('SELECT is_main_host FROM user_settings WHERE user_id = ?', [req.user.id]);

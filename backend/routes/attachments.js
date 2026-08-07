@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const { getDb } = require('../db');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, authenticateTokenOrCookie } = require('../middleware/auth');
 const logger = require('../utils/logger');
 
 const upload = multer({
@@ -125,8 +125,9 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
   }
 });
 
-// Serve the raw stored file (used for image thumbnails/previews)
-router.get('/:id/file', authenticateToken, async (req, res) => {
+// Serve the raw stored file (used for image thumbnails/previews). SEC-5: an <img src> can't
+// attach a custom Authorization header - see authenticateTokenOrCookie.
+router.get('/:id/file', authenticateTokenOrCookie, async (req, res) => {
   try {
     const db = await getDb();
     const attachment = await db.get(

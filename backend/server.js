@@ -3,6 +3,7 @@ process.env.GIT_TERMINAL_PROMPT = '0';
 process.env.GCM_INTERACTIVE = 'never';
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
 const { getDb } = require('./db');
@@ -103,6 +104,7 @@ app.use(express.json({
     req.rawBody = buf;
   }
 }));
+app.use(cookieParser());
 
 // Initialize database connection and schedule daily memory maintenance
 const logger = require('./utils/logger');

@@ -532,7 +532,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
   if (configMode) {
     return (
       <div className="auth-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'radial-gradient(circle at 50% 50%, #1e1b4b 0%, #0b0f19 80%)' }}>
-        <div className="auth-card" style={{ width: '100%', maxWidth: '480px', padding: '32px', background: 'rgba(17, 24, 39, 0.45)', backdropFilter: 'blur(16px)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '24px', boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)' }}>
+        <div className="auth-card" style={{ width: '100%', maxWidth: '480px', padding: '32px', background: 'var(--bg-glass)', backdropFilter: 'blur(16px)', border: '1px solid var(--border-glass)', borderRadius: '24px', boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)' }}>
           <h2 style={{ fontSize: '1.6rem', marginBottom: '24px', background: 'linear-gradient(135deg, #fff 30%, #06b6d4 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', textAlign: 'center', fontWeight: 'bold' }}>Agent Monitor Dashboard</h2>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '24px', textAlign: 'center' }}>
             Configure your standalone dashboard monitor to connect to the Main Host.
@@ -547,7 +547,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                 value={inputUrl} 
                 onChange={e => setInputUrl(e.target.value)} 
                 required 
-                style={{ width: '100%', padding: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', color: '#fff' }}
+                style={{ width: '100%', padding: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', borderRadius: '12px', color: 'var(--text-primary)' }}
               />
             </div>
             <div className="form-group" style={{ textAlign: 'left' }}>
@@ -559,7 +559,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                 value={inputToken} 
                 onChange={e => setInputToken(e.target.value)} 
                 required 
-                style={{ width: '100%', padding: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', color: '#fff', fontFamily: 'monospace', resize: 'vertical' }}
+                style={{ width: '100%', padding: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', borderRadius: '12px', color: 'var(--text-primary)', fontFamily: 'monospace', resize: 'vertical' }}
               />
             </div>
             {testStatus && (
@@ -567,6 +567,8 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                 {testStatus}
               </div>
             )}
+            {/* This button's background is a fixed vivid accent gradient regardless of theme,
+                so the text color stays fixed white too - it's not a page-surface color. */}
             <button type="submit" className="btn btn-primary" style={{ padding: '12px', background: 'linear-gradient(135deg, #8b5cf6, #06b6d4)', border: 'none', borderRadius: '12px', color: '#fff', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.3s ease' }}>
               Connect & Save
             </button>
@@ -622,7 +624,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                 transform: 'translateY(-50%)',
                 background: 'rgba(30, 41, 59, 0.9)',
                 border: '1px solid rgba(255, 255, 255, 0.15)',
-                color: '#fff',
+                color: 'var(--text-primary)',
                 borderRadius: '50%',
                 width: '24px',
                 height: '24px',
@@ -661,6 +663,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
             <button 
               className="btn"
               onClick={handleDisconnect}
+              // Fixed danger-red background regardless of theme; text stays fixed white to match.
               style={{ padding: '6px 12px', fontSize: '0.82rem', background: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}
             >
               Disconnect Host
@@ -729,7 +732,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                 transform: 'translateY(-50%)',
                 background: 'rgba(30, 41, 59, 0.9)',
                 border: '1px solid rgba(255, 255, 255, 0.15)',
-                color: '#fff',
+                color: 'var(--text-primary)',
                 borderRadius: '50%',
                 width: '24px',
                 height: '24px',
@@ -778,7 +781,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <RefreshCw className={aiState.isBusy ? 'spin text-accent-primary' : 'text-secondary'} size={20} />
-                  <h3 style={{ fontSize: '1rem', margin: 0, color: '#fff' }}>AI Concurrency Queue & Pipeline Status</h3>
+                  <h3 style={{ fontSize: '1rem', margin: 0, color: 'var(--text-primary)' }}>AI Concurrency Queue & Pipeline Status</h3>
                 </div>
                 <span className={`badge ${aiState.isBusy ? 'badge-short-term' : 'badge-long-term'}`} style={{ padding: '4px 12px', fontSize: '0.78rem' }}>
                   {aiState.isBusy ? 'BUSY / PROCESSING' : 'IDLE / READY'}
@@ -802,7 +805,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                   </div>
                   {aiState.activeNode && (
                     <div style={{ marginTop: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                      Active Node Execution: <strong style={{ color: '#fff' }}>{aiState.activeNode}</strong>
+                      Active Node Execution: <strong style={{ color: 'var(--text-primary)' }}>{aiState.activeNode}</strong>
                     </div>
                   )}
                 </div>
@@ -877,7 +880,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           {IconComponent && <IconComponent size={15} className={status === 'Active' ? 'text-accent-primary' : 'text-secondary'} />}
-                          <h4 style={{ fontWeight: 600, fontSize: '0.9rem', color: '#fff', margin: 0 }}>{agent.name}</h4>
+                          <h4 style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)', margin: 0 }}>{agent.name}</h4>
                         </div>
                         <span className={`badge ${status === 'Active' ? 'badge-short-term' : 'badge-long-term'}`} style={{ fontSize: '0.72rem', padding: '2px 6px' }}>
                           {status}
@@ -910,7 +913,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
               overflow: 'hidden',
               marginBottom: 0
             }}>
-              <h3 style={{ fontSize: '1rem', marginBottom: '8px', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+              <h3 style={{ fontSize: '1rem', marginBottom: '8px', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                 <Cpu size={18} className="text-accent-primary" /> Live Agent Routing Sequence
               </h3>
               <div 
@@ -936,7 +939,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                     }}>
                       <CheckCircle size={14} className="text-accent-primary" />
                       <div>
-                        <strong style={{ color: '#fff' }}>[{log.tool.toUpperCase()}]</strong> action: <code>{log.action}</code>
+                        <strong style={{ color: 'var(--text-primary)' }}>[{log.tool.toUpperCase()}]</strong> action: <code>{log.action}</code>
                         {log.params && <span style={{ color: 'var(--text-secondary)', marginLeft: '8px' }}>({JSON.stringify(log.params)})</span>}
                       </div>
                     </div>
@@ -956,7 +959,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', alignItems: 'start' }}>
           {/* Document Upload panel */}
           <div className="memory-card" style={{ padding: '20px' }}>
-            <h3 style={{ fontSize: '1.1rem', marginBottom: '16px', color: '#fff' }}>Add Document to RAG Vault</h3>
+            <h3 style={{ fontSize: '1.1rem', marginBottom: '16px', color: 'var(--text-primary)' }}>Add Document to RAG Vault</h3>
             <form onSubmit={handleUpload} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div className="form-group">
                 <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>Upload File (.txt, .md)</label>
@@ -1005,7 +1008,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
 
           {/* Indexed Documents list */}
           <div className="memory-card" style={{ padding: '20px' }}>
-            <h3 style={{ fontSize: '1.1rem', marginBottom: '16px', color: '#fff' }}>Indexed Documents</h3>
+            <h3 style={{ fontSize: '1.1rem', marginBottom: '16px', color: 'var(--text-primary)' }}>Indexed Documents</h3>
             {documents.length > 0 ? (
               <div style={{ maxHeight: '450px', overflowY: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
@@ -1019,7 +1022,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                   <tbody>
                     {documents.map(doc => (
                       <tr key={doc.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                        <td style={{ padding: '10px 8px', color: '#fff', fontWeight: 500 }}>{doc.filename}</td>
+                        <td style={{ padding: '10px 8px', color: 'var(--text-primary)', fontWeight: 500 }}>{doc.filename}</td>
                         <td style={{ padding: '10px 8px', color: 'var(--text-secondary)' }}>{(doc.file_size / 1024).toFixed(1)} KB</td>
                         <td style={{ padding: '10px 8px', textAlign: 'right' }}>
                           <button 
@@ -1216,7 +1219,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
           {/* Table of Nodes and Management Actions */}
           <div className="memory-card" style={{ padding: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
-              <h3 style={{ fontSize: '1.1rem', color: '#fff', margin: 0 }}>Distributed Field Nodes</h3>
+              <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)', margin: 0 }}>Distributed Field Nodes</h3>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button className="btn btn-secondary" onClick={() => setShowInstallGuide(!showInstallGuide)} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', padding: '6px 12px' }}>
                   <BookOpen size={14} /> Install Guide
@@ -1236,7 +1239,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
             {showInstallGuide && (
               <div style={{ padding: '16px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', marginBottom: '20px', border: '1px solid rgba(255,255,255,0.1)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                  <h4 style={{ margin: 0, color: '#fff', fontSize: '0.95rem' }}>Device Setup Walkthrough Guide</h4>
+                  <h4 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '0.95rem' }}>Device Setup Walkthrough Guide</h4>
                   <select 
                     className="form-control" 
                     value={selectedGuideDevice} 
@@ -1281,7 +1284,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                     <p><strong>To set up an ESP32 microcontroller as a Field Node:</strong></p>
                     <ol style={{ paddingLeft: '20px', margin: '0 0 10px 0' }}>
                       <li>Flash MicroPython onto your ESP32 board.</li>
-                      <li>Upload the contents of the <code style={{ color: '#fff' }}>backend/nodes/esp32/</code> directory (containing <code style={{ color: '#fff' }}>boot.py</code> and <code style={{ color: '#fff' }}>main.py</code>) to your board.</li>
+                      <li>Upload the contents of the <code style={{ color: 'var(--text-primary)' }}>backend/nodes/esp32/</code> directory (containing <code style={{ color: 'var(--text-primary)' }}>boot.py</code> and <code style={{ color: 'var(--text-primary)' }}>main.py</code>) to your board.</li>
                       <li>Configure your local WiFi SSID and password in the configuration file on the board.</li>
                       <li>Set the matching authentication bridge secret.</li>
                     </ol>
@@ -1325,9 +1328,10 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                   {discoveredNodes.map((n, idx) => (
                     <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.1)', padding: '8px 12px', borderRadius: '6px' }}>
                       <div style={{ fontSize: '0.85rem' }}>
-                        <span style={{ fontWeight: 600, color: '#fff' }}>{n.ip_address}:{n.port}</span>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{n.ip_address}:{n.port}</span>
                         <span style={{ margin: '0 8px', color: 'var(--text-secondary)' }}>|</span>
                         <span style={{ color: 'var(--text-secondary)' }}>Type: {n.device_type}</span>
+                        {/* Fixed accent-colored badge background regardless of theme; text stays fixed white to match. */}
                         {n.is_main_host && <span style={{ marginLeft: '8px', background: 'var(--accent-primary)', fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', color: '#fff' }}>Main Host</span>}
                       </div>
                       <button className="btn btn-primary" onClick={() => setRegisteringNode({ node_name: `${n.device_type.toUpperCase()} Node`, device_type: n.device_type, ip_address: n.ip_address, port: n.port, bridge_secret: '', mqtt_topic: '' })} style={{ fontSize: '0.75rem', padding: '4px 10px' }}>
@@ -1414,16 +1418,17 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
                               boxShadow: isOnline ? '0 0 8px #34d399' : 'none'
                             }}></div>
                           </td>
-                          <td style={{ padding: '10px 8px', color: '#fff', fontWeight: 500 }}>{node.node_name}</td>
+                          <td style={{ padding: '10px 8px', color: 'var(--text-primary)', fontWeight: 500 }}>{node.node_name}</td>
                           <td style={{ padding: '10px 8px', color: 'var(--text-secondary)' }}>{node.device_type}</td>
                           <td style={{ padding: '10px 8px', color: 'var(--text-secondary)' }}>{node.ip_address}:{node.port}</td>
                           <td style={{ padding: '10px 8px' }}>
-                            <span className="badge" style={{ 
-                              padding: '4px 10px', 
-                              borderRadius: '6px', 
-                              background: isOnline ? '#059669' : '#dc2626', 
-                              color: '#fff', 
-                              fontWeight: 600, 
+                            {/* Fixed status-colored background (green/red) regardless of theme; text stays fixed white to match. */}
+                            <span className="badge" style={{
+                              padding: '4px 10px',
+                              borderRadius: '6px',
+                              background: isOnline ? '#059669' : '#dc2626',
+                              color: '#fff',
+                              fontWeight: 600,
                               fontSize: '0.8rem',
                               display: 'inline-block',
                               textAlign: 'center',
@@ -1465,7 +1470,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
                 <div className="memory-card" style={{ padding: '20px' }}>
                   <h3 style={{ fontSize: '1rem', color: 'rgba(255,255,255,0.7)', margin: '0 0 12px 0' }}>CPU Specifications</h3>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fff', marginBottom: '8px' }}>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'var(--text-primary)', marginBottom: '8px' }}>
                     {hostStatus.cpu.cores} Cores
                   </div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
@@ -1478,7 +1483,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
 
                 <div className="memory-card" style={{ padding: '20px' }}>
                   <h3 style={{ fontSize: '1rem', color: 'rgba(255,255,255,0.7)', margin: '0 0 12px 0' }}>Memory Utilization</h3>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fff', marginBottom: '8px' }}>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'var(--text-primary)', marginBottom: '8px' }}>
                     {hostStatus.memory.percentage}% Used
                   </div>
                   <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden', marginBottom: '8px' }}>
@@ -1491,7 +1496,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
 
                 <div className="memory-card" style={{ padding: '20px' }}>
                   <h3 style={{ fontSize: '1rem', color: 'rgba(255,255,255,0.7)', margin: '0 0 12px 0' }}>Uptime</h3>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fff', marginBottom: '8px' }}>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'var(--text-primary)', marginBottom: '8px' }}>
                     {Math.floor(hostStatus.uptime / 3600)}h {Math.floor((hostStatus.uptime % 3600) / 60)}m
                   </div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
@@ -1502,7 +1507,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
 
               {/* Service Management Panel */}
               <div className="memory-card" style={{ padding: '20px' }}>
-                <h3 style={{ fontSize: '1.1rem', marginBottom: '16px', color: '#fff' }}>Service Management</h3>
+                <h3 style={{ fontSize: '1.1rem', marginBottom: '16px', color: 'var(--text-primary)' }}>Service Management</h3>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                   <div className="form-group" style={{ flex: 1, minWidth: '200px', margin: 0 }}>
                     <label>Systemd Service Name</label>
@@ -1528,7 +1533,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
 
               {/* Live Reports & Telemetry Log views */}
               <div className="memory-card" style={{ padding: '20px' }}>
-                <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', color: '#fff' }}>Detailed Hardware Telemetry</h3>
+                <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', color: 'var(--text-primary)' }}>Detailed Hardware Telemetry</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   {hostStatus.telemetry.temperature && (
                     <div>
@@ -1579,7 +1584,7 @@ export default function App({ toolLogs: propToolLogs, activeAgent: propActiveAge
         <div className="modal-overlay" onClick={() => setRegisteringNode(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px', width: '90%' }}>
             <div className="modal-header" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '12px' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#fff' }}>Confirm Node Registration</h3>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text-primary)' }}>Confirm Node Registration</h3>
               <button className="btn-icon" onClick={() => setRegisteringNode(null)}>
                 <X size={20} />
               </button>
