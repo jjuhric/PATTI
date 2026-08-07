@@ -1,7 +1,13 @@
 import React from 'react';
-import { describe, test, expect, vi, afterEach } from 'vitest';
+import { describe, test, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import ChatPane from './ChatPane';
+import * as exportUtils from '../utils/export';
+
+vi.mock('../utils/export', () => ({
+  exportAsCSV: vi.fn(),
+  exportAsJSON: vi.fn()
+}));
 
 describe('ChatPane Component Tests', () => {
   const defaultProps = {
@@ -335,6 +341,37 @@ describe('ChatPane Component Tests', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer test-token' }),
         body: JSON.stringify({ enabled: true })
       }));
+    });
+  });
+
+  // FEAT-4 (docs/REVIEW_2026-08-03.md): export the current chat transcript.
+  describe('chat transcript export', () => {
+    beforeEach(() => {
+      exportUtils.exportAsCSV.mockClear();
+      exportUtils.exportAsJSON.mockClear();
+    });
+
+    test('no export buttons render when there are no messages', () => {
+      render(<ChatPane {...defaultProps} messages={[]} />);
+      expect(screen.queryByTitle('Export this chat as CSV')).not.toBeInTheDocument();
+    });
+
+    test('Export CSV passes the full message list with a slugified filename from the chat title', () => {
+      render(<ChatPane {...defaultProps} chatTitle="My Weekend Trip Plan!" />);
+      fireEvent.click(screen.getByTitle('Export this chat as CSV'));
+
+      expect(exportUtils.exportAsCSV).toHaveBeenCalledWith(
+        'patti-chat-my-weekend-trip-plan.csv',
+        defaultProps.messages,
+        expect.arrayContaining([expect.objectContaining({ key: 'role' })])
+      );
+    });
+
+    test('Export JSON falls back to the chat id when there is no title', () => {
+      render(<ChatPane {...defaultProps} chatTitle={undefined} activeChatId={42} />);
+      fireEvent.click(screen.getByTitle('Export this chat as JSON'));
+
+      expect(exportUtils.exportAsJSON).toHaveBeenCalledWith('patti-chat-42.json', defaultProps.messages);
     });
   });
 });

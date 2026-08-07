@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { ChevronUp, ChevronDown, ChevronsUpDown, Search } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronsUpDown, Search, Download } from 'lucide-react';
+import { exportAsCSV, exportAsJSON } from '../utils/export';
 
 // FEAT-1 (docs/REVIEW_2026-08-03.md): one shared, reusable table with column sort, a text
 // filter, and pagination, so this isn't solved separately in every view that shows tabular
@@ -44,7 +45,15 @@ export default function DataTable({
   // no opinion on what a "bulk action" does (delete, export, etc.), it just tracks selection.
   selectable = false,
   bulkActions = null,
-  getRowLabel = null
+  getRowLabel = null,
+  // FEAT-4 (docs/REVIEW_2026-08-03.md): export the current search/sort result (every matching
+  // row, not just the current page - export is non-destructive, unlike bulk-select, so there's
+  // no reason to scope it to one page). Defaults to every searchable column, reusing the same
+  // defaultSearchValue() logic the search box already uses to pull a plain-text value out of a
+  // custom-rendered column; pass exportColumns to override which columns/labels are included.
+  exportable = false,
+  exportFilename = 'export',
+  exportColumns = null
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortKey, setSortKey] = useState(defaultSortKey);
@@ -141,19 +150,43 @@ export default function DataTable({
     setPage(0);
   };
 
+  const resolvedExportColumns = useMemo(() => {
+    if (exportColumns) return exportColumns;
+    return columns
+      .filter((col) => col.searchable !== false)
+      .map((col) => ({ key: col.key, label: col.label, value: (row) => defaultSearchValue(col, row) }));
+  }, [exportColumns, columns]);
+
+  const handleExportCSV = () => exportAsCSV(`${exportFilename}.csv`, sorted, resolvedExportColumns);
+  const handleExportJSON = () => exportAsJSON(`${exportFilename}.json`, sorted);
+
   return (
     <div className={`data-table-wrapper ${className}`}>
-      {searchable && (
-        <div className="data-table-search">
-          <Search size={14} className="data-table-search-icon" aria-hidden="true" />
-          <input
-            type="text"
-            className="form-control"
-            placeholder={searchPlaceholder}
-            value={searchTerm}
-            onChange={handleSearchChange}
-            aria-label={searchPlaceholder}
-          />
+      {(searchable || exportable) && (
+        <div className="data-table-toolbar">
+          {searchable && (
+            <div className="data-table-search">
+              <Search size={14} className="data-table-search-icon" aria-hidden="true" />
+              <input
+                type="text"
+                className="form-control"
+                placeholder={searchPlaceholder}
+                value={searchTerm}
+                onChange={handleSearchChange}
+                aria-label={searchPlaceholder}
+              />
+            </div>
+          )}
+          {exportable && (
+            <div className="data-table-export-buttons">
+              <button type="button" className="btn btn-ghost btn-sm" onClick={handleExportCSV}>
+                <Download size={13} /> CSV
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={handleExportJSON}>
+                <Download size={13} /> JSON
+              </button>
+            </div>
+          )}
         </div>
       )}
       {selectable && selectedKeys.size > 0 && (

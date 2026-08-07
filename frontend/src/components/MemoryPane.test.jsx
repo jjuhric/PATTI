@@ -1,7 +1,13 @@
 import React from 'react';
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import MemoryPane from './MemoryPane';
+import * as exportUtils from '../utils/export';
+
+vi.mock('../utils/export', () => ({
+  exportAsCSV: vi.fn(),
+  exportAsJSON: vi.fn()
+}));
 
 describe('MemoryPane Component Tests', () => {
   const defaultProps = {
@@ -231,6 +237,38 @@ describe('MemoryPane Component Tests', () => {
 
       rerender(<MemoryPane {...defaultProps} memories={defaultProps.memories.filter((m) => m.id !== 1)} />);
       expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+  });
+
+  // FEAT-4 (docs/REVIEW_2026-08-03.md): CSV/JSON export of every memory.
+  describe('export', () => {
+    beforeEach(() => {
+      exportUtils.exportAsCSV.mockClear();
+      exportUtils.exportAsJSON.mockClear();
+    });
+
+    test('no export buttons render when there are no memories', () => {
+      render(<MemoryPane {...defaultProps} memories={[]} />);
+      expect(screen.queryByText('CSV')).not.toBeInTheDocument();
+      expect(screen.queryByText('JSON')).not.toBeInTheDocument();
+    });
+
+    test('Export CSV passes every memory (long-term and short-term together)', () => {
+      render(<MemoryPane {...defaultProps} />);
+      fireEvent.click(screen.getByText('CSV'));
+
+      expect(exportUtils.exportAsCSV).toHaveBeenCalledWith(
+        'patti-memories.csv',
+        defaultProps.memories,
+        expect.arrayContaining([expect.objectContaining({ key: 'content', label: 'Content' })])
+      );
+    });
+
+    test('Export JSON passes the raw memory objects', () => {
+      render(<MemoryPane {...defaultProps} />);
+      fireEvent.click(screen.getByText('JSON'));
+
+      expect(exportUtils.exportAsJSON).toHaveBeenCalledWith('patti-memories.json', defaultProps.memories);
     });
   });
 });
