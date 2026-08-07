@@ -306,27 +306,33 @@ Frontend changes require a rebuild first — production serves the built bundle 
 cd frontend && npm run build
 ```
 
-Then restart the backend process via the scheduled task (see below) rather than a bare
-`Stop-Process`/`Start-Process` pair — the task's launcher (`run-background.vbs`) will otherwise
-just relaunch a bare process outside the task's own lifecycle tracking:
+Then restart the backend process via `backend/scripts/restart_patti_service.ps1` rather than a
+bare `Stop-Process`/`Start-Process` pair — the task's launcher (`run-background.vbs`) will
+otherwise just relaunch a bare process outside the task's own lifecycle tracking:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File backend/scripts/restart_patti_service.ps1
+```
+
+**BUG-15, confirmed 2026-08-03, fixed 2026-08-06 (see `docs/REVIEW_2026-08-03.md`):** a bare
+`Stop-ScheduledTask`/`Start-ScheduledTask` pair is not reliable on its own - `Stop-ScheduledTask`
+does not actually kill the underlying `node.exe`, since `run-background.vbs`'s `WshShell.Run`
+spawns it in a way that Task Scheduler's job-object cleanup doesn't reach. A bare
+`Start-ScheduledTask` right after then launches a *second* `node.exe` that immediately crashes
+with `EADDRINUSE` on port 3000, while the orphaned original silently keeps serving stale code.
+`restart_patti_service.ps1` (used by both this manual procedure and `host_machine_tool.js`'s
+`restart_service` action) closes that gap: it stops the task, explicitly finds and kills any
+`node.exe` still running `backend/server.js`, waits a beat, then starts the task fresh. Verified
+against production on 2026-08-06 - single clean process, no `EADDRINUSE`, no retry-loop noise.
+
+If you ever need to do this fully by hand (e.g. the script itself won't run):
 
 ```powershell
 Stop-ScheduledTask -TaskName "PATTI-Assistant"
-Start-ScheduledTask -TaskName "PATTI-Assistant"
-```
-
-**Known bug, confirmed 2026-08-03 (see BUG-15 in `docs/REVIEW_2026-08-03.md`): this alone is not
-reliable.** `Stop-ScheduledTask` does not actually kill the underlying `node.exe` — the VBS
-wrapper's child process survives it. `Start-ScheduledTask` then launches a *second* `node.exe`
-that immediately crashes with `EADDRINUSE` on port 3000, and the VBS loop keeps retrying every
-5 seconds against the still-alive original process. If this happens, find and kill the stale
-process manually, and the already-running retry loop will pick up cleanly within ~5s:
-
-```powershell
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Select-Object ProcessId, CreationDate, CommandLine
 Stop-Process -Id <the older PID> -Force
-Start-Sleep -Seconds 7
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Select-Object ProcessId, CreationDate
+Start-Sleep -Seconds 2
+Start-ScheduledTask -TaskName "PATTI-Assistant"
 ```
 
 Verify: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` returns `200`, and the
@@ -336,10 +342,10 @@ log shows `Express Backend running securely on port 3000` with no stderr, no `EA
 
 A Windows Scheduled Task (`PATTI-Assistant`) is registered and running — `patti-cli.js` set
 this up already; there is no outstanding gap here. It restarts PATTI automatically after a
-crash (`run-background.vbs`'s loop) or a reboot. What's **not** reliable is `host_machine_tool`'s
-`restart_service` action (and the `Stop-ScheduledTask`/`Start-ScheduledTask` pair it runs) — see
-the known bug above. That means PATTI's own "restart yourself" capability can currently leave
-two processes racing for port 3000 rather than cleanly restarting. Fix tracked as BUG-15.
+crash (`run-background.vbs`'s loop) or a reboot. `host_machine_tool`'s `restart_service` action
+now runs `restart_patti_service.ps1` (see above) instead of a bare
+`Stop-ScheduledTask`/`Start-ScheduledTask` pair, so PATTI's own "restart yourself" capability no
+longer races two processes for port 3000. BUG-15 closed.
 
 ### Logs
 

@@ -306,8 +306,13 @@ async function handleHostMachineTool(action, params = {}, userId = 1) {
       const platform = os.platform();
       if (platform === 'win32') {
         try {
-          await execPromise(`powershell -Command "Stop-ScheduledTask -TaskName PATTI-Assistant -ErrorAction SilentlyContinue"`);
-          await execPromise(`powershell -Command "Start-ScheduledTask -TaskName PATTI-Assistant -ErrorAction SilentlyContinue"`);
+          // BUG-15 (docs/REVIEW_2026-08-03.md): a bare Stop-ScheduledTask/Start-ScheduledTask
+          // pair leaves a stale node.exe orphan behind (see the script for why), which then
+          // races a freshly-started one for port 3000. restart_patti_service.ps1 kills the
+          // orphan in between the stop and start, closing that race instead of just documenting
+          // it as a manual workaround.
+          const restartScript = path.join(__dirname, '..', 'scripts', 'restart_patti_service.ps1');
+          await execPromise(`powershell -ExecutionPolicy Bypass -File "${restartScript}"`);
           return `Successfully restarted Windows scheduled task "PATTI-Assistant".`;
         } catch (e) {
           try {
