@@ -530,6 +530,12 @@ async function installHost(prompter, flags) {
   writeEnvVar('WEATHER_API_KEY', cfg.weatherKey);
   writeEnvVar('MQTT_BROKER_URL', 'mqtt://localhost:1883');
   writeEnvVar('MQTT_NODE_ID', IS_WINDOWS ? 'windows-main' : os.hostname());
+  // SEC-7 (docs/REVIEW_2026-08-03.md): generated so a fresh install has real credentials ready
+  // to hand to the broker whenever you enable enforcement (backend/scripts/enable_mqtt_auth.ps1)
+  // - the broker itself still defaults to allow_anonymous, so having these set doesn't require
+  // anything or break existing anonymous connections until you deliberately flip that.
+  writeEnvVar('MQTT_USERNAME', readEnvVar('MQTT_USERNAME', 'patti'));
+  ensureRandomSecret('MQTT_PASSWORD');
   ensureRandomSecret('JWT_SECRET');
   ensureRandomSecret('DB_ENCRYPTION_SECRET');
   ensureRandomSecret('OTA_SECRET');
@@ -575,11 +581,20 @@ async function installHost(prompter, flags) {
 async function installNode(prompter, flags) {
   const defaults = {
     mainHostIp: readEnvVar('MAIN_HOST_IP', 'localhost'),
-    port: readEnvVar('PORT', '3000')
+    port: readEnvVar('PORT', '3000'),
+    mqttUsername: readEnvVar('MQTT_USERNAME', ''),
+    mqttPassword: readEnvVar('MQTT_PASSWORD', '')
   };
   let mainHostIp = defaults.mainHostIp;
+  let mqttUsername = defaults.mqttUsername;
+  let mqttPassword = defaults.mqttPassword;
   if (!flags.nonInteractive) {
     mainHostIp = await askWithDefault(prompter, "Enter the Host machine's IP address", defaults.mainHostIp);
+    // SEC-7 (docs/REVIEW_2026-08-03.md): blank is fine if the Host's broker still allows
+    // anonymous connections (the default) - only needed once you've run
+    // backend/scripts/enable_mqtt_auth.ps1 on the Host and it's enforcing auth.
+    mqttUsername = await askWithDefault(prompter, 'Enter the MQTT username configured on the Host (leave blank if the broker allows anonymous connections)', defaults.mqttUsername);
+    mqttPassword = await askWithDefault(prompter, 'Enter the MQTT password configured on the Host (leave blank if the broker allows anonymous connections)', defaults.mqttPassword);
   }
 
   writeEnvVar('PORT', defaults.port);
@@ -587,6 +602,8 @@ async function installNode(prompter, flags) {
   writeEnvVar('MAIN_HOST_IP', mainHostIp);
   writeEnvVar('MQTT_BROKER_URL', `mqtt://${mainHostIp}:1883`);
   writeEnvVar('MQTT_NODE_ID', os.hostname() || 'field-node');
+  writeEnvVar('MQTT_USERNAME', mqttUsername);
+  writeEnvVar('MQTT_PASSWORD', mqttPassword);
   ensureRandomSecret('JWT_SECRET');
   ensureRandomSecret('DB_ENCRYPTION_SECRET');
 

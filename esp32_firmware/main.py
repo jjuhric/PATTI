@@ -27,6 +27,11 @@ WIFI_SSID = "your-wifi-name"
 WIFI_PASS = "your-wifi-password"
 MQTT_BROKER = "192.168.1.42" # Fallback Main Host IP address
 MQTT_PORT = 1883
+# SEC-7 (docs/REVIEW_2026-08-03.md): leave both blank if the broker still allows anonymous
+# connections. Once broker auth is enabled (see backend/scripts/enable_mqtt_auth.ps1), set
+# these to match the username/password configured there before reflashing.
+MQTT_USER = ""
+MQTT_PASS = ""
 
 # Generate deterministic node ID from hardware unique ID
 node_id = "esp32_" + ubinascii.hexlify(machine.unique_id()).decode()
@@ -160,7 +165,11 @@ def main():
 
     # Connect MQTT Broker
     try:
-        mqtt_client = MQTTClient(node_id, MQTT_BROKER, port=MQTT_PORT)
+        mqtt_client = MQTTClient(
+            node_id, MQTT_BROKER, port=MQTT_PORT,
+            user=MQTT_USER if MQTT_USER else None,
+            password=MQTT_PASS if MQTT_PASS else None
+        )
         mqtt_client.set_callback(mqtt_callback)
         mqtt_client.connect()
         print("Connected to MQTT Broker at:", MQTT_BROKER)

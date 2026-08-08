@@ -335,6 +335,32 @@ Start-Sleep -Seconds 2
 Start-ScheduledTask -TaskName "PATTI-Assistant"
 ```
 
+### Enabling MQTT broker authentication (SEC-7)
+
+**Not yet run on this instance** - the broker still allows anonymous connections
+(`allow_anonymous true` in `C:\Program Files\mosquitto\mosquitto.conf`). When ready to enable
+it, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File backend\scripts\enable_mqtt_auth.ps1
+```
+
+This generates a random password, writes a Mosquitto password file, flips
+`allow_anonymous` to `false`, sets `MQTT_USERNAME`/`MQTT_PASSWORD` in this Host's `.env`, and
+restarts both the Mosquitto service and the PATTI backend. **Do this only when you're also
+ready to update every already-deployed field device in the same sitting** - anything still
+using stale/no credentials stops reconnecting the moment this lands:
+
+- **RPi/Linux `node_client` nodes:** already read `MQTT_USERNAME`/`MQTT_PASSWORD` from their own
+  `.env` (see `patti-cli.js`'s node-pairing flow, which now prompts for these). SSH in, update
+  `.env` to match the Host's new values, then `sudo systemctl restart patti-node`.
+- **ESP32 boards:** no remote update path exists. Set `MQTT_USER`/`MQTT_PASS` in
+  `esp32_firmware/main.py` to match, then reflash via Thonny (see `PATTI.wiki/Installation.md`).
+  There is no way to do this without physical access to each board.
+
+See SEC-7 in `docs/REVIEW_2026-08-03.md` for the full reasoning (why auth-only and not also
+TLS, current fleet state, etc).
+
 Verify: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` returns `200`, and the
 log shows `Express Backend running securely on port 3000` with no stderr, no `EADDRINUSE`.
 
