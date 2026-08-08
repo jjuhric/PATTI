@@ -47,14 +47,14 @@ const helmet = require('helmet');
 
 const app = express();
 app.use(helmet({
-  // SEC-6 (docs/REVIEW_2026-08-03.md): report-only for now, not enforced. A blind enforced
-  // policy risks breaking the live app (embedded terminal WebSocket, SSE streams, the
-  // inline-style-heavy UI) in ways that can't be fully verified without clicking through every
-  // feature under a real session first. Report-only is non-breaking by construction - it only
-  // logs violations to the browser console - so this is a safe first step toward eventually
-  // enforcing a real policy once those violations have been reviewed.
+  // SEC-6 (docs/REVIEW_2026-08-03.md): enforced as of 2026-08-07. Ran in report-only first -
+  // a real logged-in session (chat, admin dashboard, LM Studio logs) produced zero violations,
+  // and every directive here already covers what the app structurally needs (script-src 'self'
+  // only, since nothing loads from a CDN; ws:/wss: in connect-src for the RPi terminal
+  // WebSocket and the SSE alert/log streams; 'unsafe-inline' in style-src for xterm.js's
+  // injected styles and the app's inline JSX style props). If a narrow case was missed, it'll
+  // surface as an obvious blocked-request entry in the console rather than something silent.
   contentSecurityPolicy: {
-    reportOnly: true,
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
