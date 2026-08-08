@@ -10,6 +10,7 @@ import SettingsModal from './components/SettingsModal';
 import ProfileModal from './components/ProfileModal';
 import AgentDashboard from './components/AgentDashboard';
 import AdminDashboard from './components/AdminDashboard';
+import TokenCountView from './components/TokenCountView';
 import PersonalitySkillsPane from './components/PersonalitySkillsPane';
 import Toast from './components/Toast';
 import SetupWizard from './components/SetupWizard';
@@ -1199,6 +1200,17 @@ function App() {
             onDeleteMemory={handleDeleteMemory}
             onBulkDeleteMemories={handleBulkDeleteMemories}
           />
+        )}
+        {activeTab === 'usage' && (
+          <div className="chat-pane" style={{ overflowY: 'auto', padding: '24px' }}>
+            <div style={{ marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>My Usage</h2>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+                Your own token usage and cost visibility - not other users' activity.
+              </p>
+            </div>
+            <TokenCountView token={token} />
+          </div>
         )}
         {activeTab === 'dashboard' && (
           <AgentDashboard

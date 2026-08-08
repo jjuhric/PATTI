@@ -186,6 +186,12 @@ describe('Sidebar Component Tests', () => {
     fireEvent.click(dashboardBtn);
     expect(defaultProps.setActiveTab).toHaveBeenCalledWith('dashboard');
     expect(mockSetIsMobileSidebarOpen).toHaveBeenCalledWith(false);
+
+    // 4. My Usage click (ENH-5)
+    const usageBtn = screen.getByText('My Usage');
+    fireEvent.click(usageBtn);
+    expect(defaultProps.setActiveTab).toHaveBeenCalledWith('usage');
+    expect(mockSetIsMobileSidebarOpen).toHaveBeenCalledWith(false);
   });
 
   test('covers activeTab renders and editing chat click check', () => {
@@ -210,12 +216,20 @@ describe('Sidebar Component Tests', () => {
     expect(screen.getByText('AI Memory').closest('button')).toHaveClass('active');
 
     rerender(
-      <Sidebar 
-        {...defaultProps} 
+      <Sidebar
+        {...defaultProps}
         activeTab="dashboard"
       />
     );
     expect(screen.getByText('Agent Dashboard').closest('button')).toHaveClass('active');
+
+    rerender(
+      <Sidebar
+        {...defaultProps}
+        activeTab="usage"
+      />
+    );
+    expect(screen.getByText('My Usage').closest('button')).toHaveClass('active');
 
     // Click chat item while editing it (should NOT activate/setActiveChatId)
     rerender(

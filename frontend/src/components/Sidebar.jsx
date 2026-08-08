@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MessageSquare, Plus, Edit2, X, Calendar, Settings, LogOut, Brain, Network, Send, Sliders, ShieldCheck, Sun, Moon, Search, CheckSquare } from 'lucide-react';
+import { MessageSquare, Plus, Edit2, X, Calendar, Settings, LogOut, Brain, Network, Send, Sliders, ShieldCheck, Sun, Moon, Search, CheckSquare, BarChart2 } from 'lucide-react';
 
 export default function Sidebar({
   user,
@@ -296,9 +296,18 @@ export default function Sidebar({
           <span>AI Memory</span>
         </button>
 
-        <button 
-          className={`btn-new-chat ${activeTab === 'dashboard' ? 'active' : ''}`} 
-          onClick={() => { setActiveTab('dashboard'); setIsMobileSidebarOpen(false); }} 
+        <button
+          className={`btn-new-chat ${activeTab === 'usage' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('usage'); setIsMobileSidebarOpen(false); }}
+          style={{ margin: 0 }}
+        >
+          <BarChart2 size={18} />
+          <span>My Usage</span>
+        </button>
+
+        <button
+          className={`btn-new-chat ${activeTab === 'dashboard' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('dashboard'); setIsMobileSidebarOpen(false); }}
           style={{ margin: 0 }}
         >
           <Network size={18} />
