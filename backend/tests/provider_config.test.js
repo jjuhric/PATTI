@@ -36,7 +36,7 @@ describe('resolveTarget', () => {
   test('local provider falls back to LOCAL_LLM_URL env then a hardcoded default', () => {
     const original = process.env.LOCAL_LLM_URL;
     delete process.env.LOCAL_LLM_URL;
-    expect(resolveTarget({ provider: 'local' }).targetUrl).toBe('http://localhost:1234/v1');
+    expect(resolveTarget({ provider: 'local' }).targetUrl).toBe('http://127.0.0.1:1234/v1');
     process.env.LOCAL_LLM_URL = 'http://envhost:1234/v1';
     expect(resolveTarget({ provider: 'local' }).targetUrl).toBe('http://envhost:1234/v1');
     if (original === undefined) delete process.env.LOCAL_LLM_URL; else process.env.LOCAL_LLM_URL = original;

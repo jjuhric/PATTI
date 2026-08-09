@@ -29,7 +29,7 @@ function resolveTarget(settings) {
   const { provider, localBaseUrl, localApiKey, localApiStyle, onlineUrl, onlineKey, onlineProvider } = settings;
   if (provider === 'local') {
     return {
-      targetUrl: localBaseUrl || process.env.LOCAL_LLM_URL || 'http://localhost:1234/v1',
+      targetUrl: localBaseUrl || process.env.LOCAL_LLM_URL || 'http://127.0.0.1:1234/v1',
       targetKey: localApiKey,
       targetStyle: localApiStyle || 'openai'
     };
