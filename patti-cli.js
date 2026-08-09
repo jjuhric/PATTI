@@ -465,7 +465,10 @@ async function installHost(prompter, flags) {
     deviceType: readEnvVar('DEVICE_TYPE', IS_WINDOWS ? 'windows' : 'linux'),
     adminUser: 'admin',
     adminPass: 'adminpassword',
-    localUrl: readEnvVar('LOCAL_LLM_URL', 'http://localhost:1234/v1'),
+    // 127.0.0.1, not localhost: Node's fetch can resolve "localhost" to the IPv6 loopback
+    // (::1) first, which most local LLM servers (e.g. LM Studio) don't listen on by default -
+    // an intermittent "fetch failed" depending on which address gets picked, not a real outage.
+    localUrl: readEnvVar('LOCAL_LLM_URL', 'http://127.0.0.1:1234/v1'),
     localKey: readEnvVar('LOCAL_LLM_KEY', ''),
     onlineKey: readEnvVar('GEMINI_API_KEY', ''),
     onlineProvider: 'gemini',

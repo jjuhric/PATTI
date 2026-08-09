@@ -2,7 +2,7 @@
  * Normalizes the local base URL to point to native /api/v1 or compat /v1
  */
 function getNativeBaseUrl(localBaseUrl) {
-  const clean = (localBaseUrl || 'http://localhost:1234/v1').trim().replace(/\/$/, '');
+  const clean = (localBaseUrl || 'http://127.0.0.1:1234/v1').trim().replace(/\/$/, '');
   if (clean.endsWith('/v1')) {
     return clean.replace(/\/v1$/, '/api/v1');
   }
@@ -10,7 +10,7 @@ function getNativeBaseUrl(localBaseUrl) {
 }
 
 function getCompatBaseUrl(localBaseUrl) {
-  const clean = (localBaseUrl || 'http://localhost:1234/v1').trim().replace(/\/$/, '');
+  const clean = (localBaseUrl || 'http://127.0.0.1:1234/v1').trim().replace(/\/$/, '');
   if (clean.endsWith('/v1')) {
     return clean;
   }

@@ -260,7 +260,7 @@ export default function SetupWizard({ token, onComplete }) {
               <div 
                 onClick={() => {
                   setDeviceForm({ device_type: 'windows', is_main_host: 1 });
-                  setLlmForm(prev => ({ ...prev, local_url: 'http://localhost:1234/v1' }));
+                  setLlmForm(prev => ({ ...prev, local_url: 'http://127.0.0.1:1234/v1' }));
                 }}
                 style={{ 
                   padding: '16px', borderRadius: '12px', border: `2px solid ${deviceForm.device_type === 'windows' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.1)'}`, 
