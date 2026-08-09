@@ -130,7 +130,7 @@ router.get('/health', async (req, res) => {
     const settings = await db.get('SELECT local_base_url, provider FROM user_settings LIMIT 1');
     
     if (settings && settings.provider === 'local') {
-      const targetUrl = settings.local_base_url || 'http://localhost:1234/v1';
+      const targetUrl = settings.local_base_url || 'http://127.0.0.1:1234/v1';
       const controller = new AbortController();
       const id = setTimeout(() => controller.abort(), 2000); // Strict 2s connection gate
       

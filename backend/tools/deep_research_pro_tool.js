@@ -42,7 +42,7 @@ async function buildResearchProcessEnv(db, userId) {
     const settings = await db.get('SELECT * FROM user_settings WHERE user_id = ?', [userId]);
     if (settings && settings.provider === 'local') {
       env.LLM_PROVIDER = 'lmstudio';
-      env.LLM_BASE_URL = settings.local_url || process.env.LOCAL_LLM_URL || 'http://localhost:1234/v1';
+      env.LLM_BASE_URL = settings.local_url || process.env.LOCAL_LLM_URL || 'http://127.0.0.1:1234/v1';
       env.LLM_MODEL = settings.preferred_local_model || settings.model_name || env.LLM_MODEL || '';
       const { decrypt } = require('../utils/crypto');
       const localKey = decrypt(settings.local_key);
