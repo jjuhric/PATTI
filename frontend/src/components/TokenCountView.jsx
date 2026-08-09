@@ -78,8 +78,8 @@ export default function TokenCountView({ token }) {
       const bucketEnd = start + (i + 1) * bucketSize;
       const midTime = bucketStart + bucketSize / 2;
       const dateObj = new Date(midTime);
-      const label = useDate 
-        ? dateObj.toLocaleDateString([], labelFormat) 
+      const label = useDate
+        ? dateObj.toLocaleDateString([], labelFormat)
         : dateObj.toLocaleTimeString([], labelFormat);
       return {
         startTime: bucketStart,
@@ -133,8 +133,8 @@ export default function TokenCountView({ token }) {
         </div>
 
         {/* Quick refresh button */}
-        <button 
-          className="btn btn-secondary" 
+        <button
+          className="btn btn-secondary"
           onClick={() => fetchTokenData(tokenTimeframe)}
           disabled={loadingTokens}
           style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', padding: '6px 12px' }}
@@ -207,7 +207,7 @@ export default function TokenCountView({ token }) {
               <tbody>
                 {tokenData && tokenData.tableData && tokenData.tableData.length > 0 ? (
                   tokenData.tableData.map((item, idx) => {
-                    const pct = tokenData.totalTokens > 0 
+                    const pct = tokenData.totalTokens > 0
                       ? ((item.total_tokens / tokenData.totalTokens) * 100).toFixed(1) + '%'
                       : '0.0%';
                     return (
