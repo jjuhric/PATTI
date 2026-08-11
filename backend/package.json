@@ -29,7 +29,7 @@
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.6.1",
+    "express-rate-limit": "^8.6.2",
     "google-assistant": "^0.7.0",
     "google-news-url-decoder": "^1.2.2",
     "gpt-tokenizer": "^3.4.0",
