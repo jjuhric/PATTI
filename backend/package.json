@@ -40,7 +40,7 @@
     "mqtt": "^5.15.2",
     "multer": "^2.2.0",
     "node-dns-sd": "^1.0.1",
-    "node-html-parser": "^8.0.4",
+    "node-html-parser": "^9.0.1",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.19.1",
     "pptxgenjs": "^4.0.1",
