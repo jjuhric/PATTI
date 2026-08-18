@@ -11,7 +11,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "lucide-react": "^1.28.0",
+    "lucide-react": "^1.31.0",
     "marked": "^18.0.7",
     "mermaid": "^11.16.1",
     "react": "^19.2.8",
