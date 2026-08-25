@@ -27,7 +27,7 @@
     "@vitest/coverage-v8": "^4.1.9",
     "jsdom": "^30.0.1",
     "vite": "^8.2.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=25.5.0"
