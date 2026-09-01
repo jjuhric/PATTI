@@ -42,7 +42,7 @@
     "node-dns-sd": "^1.0.1",
     "node-html-parser": "^8.0.4",
     "pdf-parse": "^2.4.5",
-    "pdfkit": "^0.19.1",
+    "pdfkit": "^0.20.1",
     "pptxgenjs": "^4.0.1",
     "sqlite": "^5.1.1",
     "sqlite3": "^6.0.1",
