@@ -26,7 +26,7 @@
     "check:dedup": "node scripts/check_dedup_drift.js"
   },
   "dependencies": {
-    "concurrently": "^10.0.4",
+    "concurrently": "^10.0.6",
     "google-news-url-decoder": "^1.2.2",
     "node-html-parser": "^9.0.1"
   },
